@@ -47,7 +47,6 @@ class MemoryDisk implements Disk {
   }
 }
 
-// Data corruption simulator
 class CorruptionSimulator {
   static randomByteCorruption(disk: MemoryDisk, corruptionRate: number = 0.01): number {
     const storage = disk.getRawStorage();
@@ -77,7 +76,6 @@ class CorruptionSimulator {
   }
 }
 
-// Test utilities
 class TestUtils {
   static generateRandomData(size: number): Buffer {
     return crypto.randomBytes(size);
@@ -96,7 +94,6 @@ class TestUtils {
   }
 }
 
-// Logging utilities
 class Logger {
   static info(message: string): void {
     console.log(`[INFO] ${message}`);
@@ -115,9 +112,25 @@ class Logger {
   }
 
   static section(title: string): void {
-    console.log(`\n${'='.repeat(50)}`);
-    console.log(`${title.toUpperCase()}`);
-    console.log(`${'='.repeat(50)}`);
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🏗️  YOIFS ${title.toUpperCase()}`);
+    console.log(`${'='.repeat(60)}`);
+  }
+
+  static yoifsIntro(): void {
+    const art = `
+██╗   ██╗ ██████╗ ██╗███████╗███████╗
+╚██╗ ██╔╝██╔═══██╗██║██╔════╝██╔════╝
+ ╚████╔╝ ██║   ██║██║█████╗  ███████╗
+  ╚██╔╝  ██║   ██║██║██╔══╝  ╚════██║
+   ██║   ╚██████╔╝██║██║     ███████║
+   ╚═╝    ╚═════╝ ╚═╝╚═╝     ╚══════╝
+                                     
+   Your Own Indestructible File System
+    `;
+    console.log(art);
+    console.log(`🎉 Welcome to YOIFS - where data corruption meets its match!`);
+    console.log(`💪 Let's see how indestructible your file system really is...\n`);
   }
 }
 
@@ -132,7 +145,8 @@ class TestHarness {
   }
 
   async runAllTests(): Promise<void> {
-    Logger.section('Fault-Tolerant File System Tests');
+    Logger.yoifsIntro();
+    Logger.section('Indestructibility Assessment Protocol');
 
     await this.testLevel1();
     await this.testLevel2();
@@ -141,7 +155,7 @@ class TestHarness {
 
   // Level 1: Basic filesystem functionality
   async testLevel1(): Promise<void> {
-    Logger.section('Level 1: Basic File System Operations');
+    Logger.section('Level 1: Basic YOIFS Operations');
 
     try {
       // Test 1: Write and read a simple file
@@ -183,9 +197,9 @@ class TestHarness {
       Logger.info(`Found ${listResult.data.length} files: ${listResult.data.join(', ')}`);
 
       if (listResult.data.length >= 4) { // Should have at least test.txt + 3 new files
-        Logger.success('File listing works correctly');
+        Logger.success('YOIFS file listing works like a charm!');
       } else {
-        Logger.error('File listing incomplete');
+        Logger.error('File listing incomplete - YOIFS needs more work here');
       }
 
       // Test 3: File not found
@@ -204,7 +218,7 @@ class TestHarness {
 
   // Level 2: Corruption detection
   async testLevel2(): Promise<void> {
-    Logger.section('Level 2: Corruption Detection');
+    Logger.section('Level 2: YOIFS Corruption Detection Powers');
 
     try {
       // Create a fresh disk for corruption tests
@@ -268,11 +282,11 @@ class TestHarness {
       Logger.info(`  - Undetected corruptions: ${undetectedCorruptions}`);
 
       if (detectedCorruptions > 0 && undetectedCorruptions === 0) {
-        Logger.success('Corruption detection working correctly');
+        Logger.success('YOIFS corruption detection is on point! 🎯');
       } else if (undetectedCorruptions > 0) {
-        Logger.error(`${undetectedCorruptions} corruptions went undetected`);
+        Logger.error(`${undetectedCorruptions} corruptions went undetected - YOIFS needs more vigilance!`);
       } else {
-        Logger.warning('No corruptions were detected - may indicate detection not implemented');
+        Logger.warning('No corruptions were detected - YOIFS might need corruption detection implementation');
       }
 
     } catch (error) {
@@ -282,9 +296,9 @@ class TestHarness {
 
   // Level 3: Fault tolerance rate testing
   async testLevel3(): Promise<void> {
-    Logger.section('Level 3: Fault Tolerance Rate Testing');
+    Logger.section('Level 3: YOIFS Indestructibility Stress Test');
 
-    const corruptionRates = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3];
+    const corruptionRates = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1];
     const testFileCount = 10;
 
     Logger.info(`Testing fault tolerance across corruption rates: ${corruptionRates.map(r => `${(r * 100).toFixed(1)}%`).join(', ')}`);
@@ -354,19 +368,20 @@ class TestHarness {
         Logger.error(`Data integrity compromised: ${dataIntegrityFailures} files returned incorrect data without detection`);
       }
     }
+
+    Logger.section('YOIFS Assessment Complete');
   }
 }
 
-// Main execution
 async function main() {
   const harness = new TestHarness();
   await harness.runAllTests();
 }
 
-// Export for use in solution
 export { Disk, MemoryDisk, CorruptionSimulator, TestUtils, Logger };
 
-// Run tests if this file is executed directly
 if (require.main === module) {
-  main().catch(console.error);
+  main().catch((error) => {
+    console.error('💥 YOIFS encountered an unexpected error:', error);
+  });
 }

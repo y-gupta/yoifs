@@ -1,16 +1,19 @@
-# Fault-Tolerant File System Challenge
+# YOIFS
 
-This project implements a fault-tolerant file system that can handle disk corruption and maintain data integrity. The challenge is designed to test your ability to build robust systems that can detect and handle data corruption gracefully.
+Welcome to Your Own Indestructible File System.
 
-## Problem Statement
+This project seeds the idea of a simple fault-tolerant file system that can handle disk corruption and maintain data integrity. It doesn't compete with zfs, but it's your own!
 
-You need to implement a file system that can:
+## Getting started
+
+To start, you need to implement YOIFS. In an ideal world, an industructible file system should -
 
 1. **Basic Operations**: Store, retrieve, and list files on a simulated disk
 2. **Corruption Detection**: Detect when data has been corrupted on disk
 3. **Fault Tolerance**: Maintain functionality even when parts of the disk are corrupted
 
-The system will be tested against increasing levels of data corruption to determine its fault tolerance limits.
+YOIFS does ship with a test harness that will help you tell how indestructible your file system is, by testing against increasing levels of data corruption to determine its fault tolerance limits.
+
 
 ## Architecture
 
@@ -57,10 +60,6 @@ pnpm install
 ```bash
 # Run the complete test suite
 pnpm dev
-
-# Or run with TypeScript compilation
-pnpm build
-pnpm start
 ```
 
 ## Test Suite Overview
