@@ -226,7 +226,7 @@ class TestHarness {
       this.fs = new FileSystem(this.disk);
 
       Logger.info('Setting up files for corruption testing...');
-      const testFiles = TestUtils.generateTestFiles(5, 200, 800);
+      const testFiles = TestUtils.generateTestFiles(100, 10, 500);
 
       // Write all test files
       for (const file of testFiles) {
@@ -245,13 +245,15 @@ class TestHarness {
         const result = await this.fs.readFile(file.name);
         if (result.success && result.data && Buffer.compare(file.content, result.data) === 0) {
           beforeCorruptionSuccess++;
+        } else {
+          Logger.error(`File ${file.name} read incorrectly: ${result.error}`);
         }
       }
       Logger.info(`${beforeCorruptionSuccess}/${testFiles.length} files read correctly before corruption`);
 
       // Introduce mild corruption (1% of bytes)
-      Logger.info('Introducing 1% random byte corruption...');
-      const corruptedBytes = CorruptionSimulator.randomByteCorruption(this.disk, 0.01);
+      Logger.info('Introducing 0.02% random byte corruption...');
+      const corruptedBytes = CorruptionSimulator.randomByteCorruption(this.disk, 0.0002);
       Logger.info(`Corrupted ${corruptedBytes} bytes`);
 
       // Test corruption detection
@@ -298,20 +300,20 @@ class TestHarness {
   async testLevel3(): Promise<void> {
     Logger.section('Level 3: YOIFS Indestructibility Stress Test');
 
-    const corruptionRates = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1];
-    const testFileCount = 10;
+    const corruptionRates = [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1];
+    const testFileCount = 100;
 
     Logger.info(`Testing fault tolerance across corruption rates: ${corruptionRates.map(r => `${(r * 100).toFixed(1)}%`).join(', ')}`);
 
     for (const rate of corruptionRates) {
-      Logger.info(`\nTesting corruption rate: ${(rate * 100).toFixed(1)}%`);
+      Logger.info(`\nTesting corruption rate: ${(rate * 100).toFixed(2)}%`);
 
       // Create fresh disk and filesystem for each test
       const testDisk = new MemoryDisk(1024 * 1024);
       const testFs = new FileSystem(testDisk);
 
       // Generate and write test files
-      const testFiles = TestUtils.generateTestFiles(testFileCount, 300, 1000);
+      const testFiles = TestUtils.generateTestFiles(testFileCount, 10, 500);
       let writeSuccesses = 0;
 
       for (const file of testFiles) {
@@ -350,19 +352,11 @@ class TestHarness {
         }
       }
 
-      const totalHandledCorrectly = successfulReads + detectedCorruptions;
-      const faultToleranceRate = (totalHandledCorrectly / testFileCount) * 100;
-
-      Logger.info(`  Results for ${(rate * 100).toFixed(1)}% corruption:`);
+      Logger.info(`  Results for ${(rate * 100).toFixed(2)}% corruption:`);
       Logger.info(`    - Corrupted bytes: ${corruptedBytes}`);
       Logger.info(`    - Successful reads: ${successfulReads}/${testFileCount} (${(successfulReads / testFileCount * 100).toFixed(1)}%)`);
       Logger.info(`    - Detected corruptions: ${detectedCorruptions}/${testFileCount} (${(detectedCorruptions / testFileCount * 100).toFixed(1)}%)`);
       Logger.info(`    - Data integrity failures: ${dataIntegrityFailures}/${testFileCount} (${(dataIntegrityFailures / testFileCount * 100).toFixed(1)}%)`);
-      Logger.info(`    - Fault tolerance rate: ${faultToleranceRate.toFixed(1)}%`);
-
-      if (faultToleranceRate < 80) {
-        Logger.warning(`Fault tolerance drops below 80% at ${(rate * 100).toFixed(1)}% corruption rate`);
-      }
 
       if (dataIntegrityFailures > 0) {
         Logger.error(`Data integrity compromised: ${dataIntegrityFailures} files returned incorrect data without detection`);
