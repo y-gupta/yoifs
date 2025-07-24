@@ -1,0 +1,98 @@
+# Fault-Tolerant File System Challenge
+
+This project implements a fault-tolerant file system that can handle disk corruption and maintain data integrity. The challenge is designed to test your ability to build robust systems that can detect and handle data corruption gracefully.
+
+## Problem Statement
+
+You need to implement a file system that can:
+
+1. **Basic Operations**: Store, retrieve, and list files on a simulated disk
+2. **Corruption Detection**: Detect when data has been corrupted on disk
+3. **Fault Tolerance**: Maintain functionality even when parts of the disk are corrupted
+
+The system will be tested against increasing levels of data corruption to determine its fault tolerance limits.
+
+## Architecture
+
+The project consists of several key components:
+
+- **`FileSystem`** (`solution.ts`): The main file system implementation (your code goes here)
+- **`Disk`** interface: Abstraction for disk operations (read/write at offsets)
+- **`MemoryDisk`**: In-memory disk implementation for testing
+- **`CorruptionSimulator`**: Introduces controlled corruption for testing
+- **`TestHarness`**: Comprehensive test suite with three levels of testing
+
+## Implementation Levels
+
+### Level 1: Basic File System Operations
+- Implement `writeFile()`, `readFile()`, and `listFiles()` methods
+- Design a file allocation scheme (e.g., File Allocation Table)
+- Handle multiple files and proper metadata storage
+
+### Level 2: Corruption Detection
+- Add checksums or other integrity verification mechanisms
+- Detect corrupted data during read operations
+- Return appropriate error messages when corruption is detected
+
+### Level 3: Fault Tolerance Optimization
+- Implement redundancy (e.g., data replication, error correction codes)
+- Optimize for maximum fault tolerance under various corruption rates
+- Handle partial corruption gracefully
+
+## Getting Started
+
+### Prerequisites
+- Node.js (v16 or higher)
+- pnpm package manager
+
+### Installation
+
+```bash
+# Install dependencies
+pnpm install
+```
+
+### Running the Tests
+
+```bash
+# Run the complete test suite
+pnpm dev
+
+# Or run with TypeScript compilation
+pnpm build
+pnpm start
+```
+
+## Test Suite Overview
+
+The test harness runs three levels of tests:
+
+1. **Basic Functionality**: Tests file operations without corruption
+2. **Corruption Detection**: Introduces 1% corruption and tests detection capabilities
+3. **Fault Tolerance Rate**: Tests system resilience across corruption rates from 0.1% to 30%
+
+### Test Results Interpretation
+
+- **Fault Tolerance Rate**: Percentage of files that are either read correctly or have corruption properly detected
+- **Data Integrity Failures**: Cases where corrupted data is returned without detection (this is bad!)
+- **Detection Rate**: How well the system identifies corrupted files
+
+## Success Criteria
+
+A successful implementation should:
+
+- ✅ Pass all Level 1 tests (basic functionality)
+- ✅ Detect corruption reliably (Level 2)
+- ✅ Maintain >90% fault tolerance up to reasonable corruption rates
+- ✅ Never return corrupted data without detection
+- ✅ Gracefully degrade performance under high corruption
+
+## Advanced Challenges
+
+Once you have a working solution, consider:
+
+- **Error Correction Codes**: Can you repair corrupted data instead of just detecting it?
+- **Self healing**: In real life, reads and writes happen over time to same files. If you can fix errors at some frequency, you can keep the file system healthy.
+- **Compression**: Reduce storage overhead while maintaining fault tolerance. Detect duplicate blocks maybe?
+- **Concurrency**: How do you handle concurrent reads and writes, how does your system behave under different patterns?
+- **Efficiency**: How much extra space do you need to store? How much extra time do you need to read and write?
