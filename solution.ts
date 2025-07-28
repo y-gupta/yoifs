@@ -29,7 +29,8 @@ export class FileSystem {
     this.disk = disk;
   }
 
-  private checksum(data: Buffer): string {
+  // helper function to calculate checksum, feel free to use this or implement your own
+  private calculateChecksum(data: Buffer): string {
     return crypto.createHash('sha256').update(data).digest('hex');
   }
 
@@ -77,7 +78,7 @@ export class FileSystem {
     this.fileMetaList = this.fileMetaList.filter(f => f.name !== fileName);
     const offset = this.getNextOffset();
     const replicaOffset = offset + Math.ceil(content.length / this.blockSize) * this.blockSize;
-    const checksum = this.checksum(content);
+    const checksum = this.calculateChecksum(content);
     const meta: FileMeta = { name: fileName, offset, size: content.length, checksum, replicaOffset };
     const diskSize = this.disk.size ? this.disk.size() : Infinity;
     if (replicaOffset + content.length > diskSize) {
@@ -89,7 +90,6 @@ export class FileSystem {
       await this.disk.write(replicaOffset, content);
       this.fileMetaList.push(meta);
       await this.saveFAT();
-      Logger.info(`[YOIFS] File '${fileName}' written and replicated.`);
       return { success: true };
     } catch (error: any) {
       Logger.error(`[YOIFS] Failed to write file '${fileName}': ${error.message}`);
@@ -112,26 +112,23 @@ export class FileSystem {
     let primaryOk = false, replicaOk = false;
     try {
       primary = await this.disk.read(meta.offset, meta.size);
-      if (primary && this.checksum(primary) === meta.checksum) primaryOk = true;
+      if (primary && this.calculateChecksum(primary) === meta.checksum) primaryOk = true;
     } catch {}
     try {
       replica = await this.disk.read(meta.replicaOffset, meta.size);
-      if (replica && this.checksum(replica) === meta.checksum) replicaOk = true;
+      if (replica && this.calculateChecksum(replica) === meta.checksum) replicaOk = true;
     } catch {}
     if (primaryOk && replicaOk && primary) {
       return { success: true, data: primary };
     }
     if (primaryOk && primary) {
-      Logger.info(`[YOIFS] Only primary copy of '${fileName}' is good. Self-healing replica.`);
       await this.disk.write(meta.replicaOffset, primary);
       return { success: true, data: primary };
     }
     if (replicaOk && replica) {
-      Logger.info(`[YOIFS] Only replica copy of '${fileName}' is good. Self-healing primary.`);
       await this.disk.write(meta.offset, replica);
       return { success: true, data: replica };
     }
-    Logger.error(`[YOIFS] Both copies of '${fileName}' are corrupted!`);
     return { success: false, error: 'Corruption detected' };
   }
 
