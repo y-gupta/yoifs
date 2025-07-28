@@ -1,105 +1,145 @@
+import { Logger } from './index';
 import * as crypto from 'crypto';
-import { Disk } from './index';
 
-// Result type for file system operations
 interface FileSystemResult<T> {
   success: boolean;
   data?: T;
   error?: string;
 }
 
-/**
- * Fault-Tolerant File System Implementation
- * 
- * LEVELS TO IMPLEMENT:
- * 1. Basic file system operations (write, read, list) without fault tolerance
- * 2. Add corruption detection during file reads using checksums
- * 3. Optimize for fault tolerance - your solution will be tested against 
- *    increasing corruption rates to find the breaking point. 
- */
+interface FileMeta {
+  name: string;
+  offset: number;
+  size: number;
+  checksum: string;
+  replicaOffset: number;
+}
 
 export class FileSystem {
-  private disk: Disk;
+  private disk: any;
+  private blockSize = 512;
+  private fatOffset = 0;
+  private fatSize = 32768; // 32 KB for FAT
+  private fileMetaList: FileMeta[] = [];
+  private fatLoaded = false;
+  private fatCorrupted = false;
 
-  constructor(disk: Disk) {
+  constructor(disk: any) {
     this.disk = disk;
   }
 
-  /**
-   * Write a file to the disk
-   * 
-   * TODO: Implement basic file storage
-   * - Design a simple file system layout (you can use any format you prefer)
-   * - Store file metadata (name, size, location)
-   * - Handle disk space allocation
-   * - Return appropriate success/error results
-   */
-  async writeFile(filename: string, content: Buffer): Promise<FileSystemResult<void>> {
-    try {
-      // TODO: Implement file writing
-      // Hints:
-      // - You might want to store a file allocation table (FAT) or similar metadata
-      // - Consider how you'll handle multiple files and avoid collisions
-      // - Think about how to store variable-length file names and content
+  private checksum(data: Buffer): string {
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
 
-      return { success: false, error: 'Not implemented' };
-    } catch (error) {
-      return { success: false, error: `Write error: ${error}` };
+  private async loadFAT() {
+    if (this.fatLoaded && !this.fatCorrupted) return;
+    try {
+      const raw = await this.disk.read(this.fatOffset, this.fatSize);
+      const json = raw.toString().replace(/\0+$/, '');
+      this.fileMetaList = json.trim() ? JSON.parse(json) : [];
+      this.fatCorrupted = false;
+      Logger.info(`[YOIFS] FAT loaded (${this.fileMetaList.length} files).`);
+    } catch (e) {
+      Logger.error('[YOIFS] Could not load FAT! Disk might be empty or corrupted.');
+      this.fileMetaList = [];
+      this.fatCorrupted = true;
+    }
+    this.fatLoaded = true;
+  }
+
+  private async saveFAT() {
+    const json = JSON.stringify(this.fileMetaList);
+    if (Buffer.byteLength(json) > this.fatSize) {
+      Logger.error('[YOIFS] FAT overflow! Too many files or file names too long.');
+      throw new Error('FAT overflow: too many files or file names too long');
+    }
+    const buf = Buffer.alloc(this.fatSize, 0);
+    buf.write(json);
+    await this.disk.write(this.fatOffset, buf);
+  }
+
+  private getNextOffset(): number {
+    let maxEnd = this.fatOffset + this.fatSize;
+    for (const meta of this.fileMetaList) {
+      maxEnd = Math.max(maxEnd, meta.offset + meta.size, meta.replicaOffset + meta.size);
+    }
+    return Math.ceil(maxEnd / this.blockSize) * this.blockSize;
+  }
+
+  async writeFile(fileName: string, content: Buffer): Promise<FileSystemResult<void>> {
+    await this.loadFAT();
+    if (this.fatCorrupted) {
+      Logger.error('[YOIFS] Cannot write file: FAT is corrupted!');
+      return { success: false, error: 'FAT corrupted' };
+    }
+    this.fileMetaList = this.fileMetaList.filter(f => f.name !== fileName);
+    const offset = this.getNextOffset();
+    const replicaOffset = offset + Math.ceil(content.length / this.blockSize) * this.blockSize;
+    const checksum = this.checksum(content);
+    const meta: FileMeta = { name: fileName, offset, size: content.length, checksum, replicaOffset };
+    const diskSize = this.disk.size ? this.disk.size() : Infinity;
+    if (replicaOffset + content.length > diskSize) {
+      Logger.error('[YOIFS] Not enough disk space for file and replica!');
+      return { success: false, error: 'Disk full: not enough space for file and replica' };
+    }
+    try {
+      await this.disk.write(offset, content);
+      await this.disk.write(replicaOffset, content);
+      this.fileMetaList.push(meta);
+      await this.saveFAT();
+      Logger.info(`[YOIFS] File '${fileName}' written and replicated.`);
+      return { success: true };
+    } catch (error: any) {
+      Logger.error(`[YOIFS] Failed to write file '${fileName}': ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 
-  /**
-   * Read a file from the disk
-   * 
-   * TODO: Implement file reading
-   * - Look up file metadata to find where the file is stored
-   * - Read the file content from disk
-   * - Handle file not found errors
-   */
-  async readFile(filename: string): Promise<FileSystemResult<Buffer>> {
-    try {
-      // TODO: Implement file reading
-      // Hints:
-      // - First check if the file exists in your metadata
-      // - Read the content from the appropriate disk location
-      // - Return the file data as a Buffer
-
-      return { success: false, error: 'Not implemented' };
-    } catch (error) {
-      return { success: false, error: `Read error: ${error}` };
+  async readFile(fileName: string): Promise<FileSystemResult<Buffer>> {
+    await this.loadFAT();
+    if (this.fatCorrupted) {
+      Logger.error('[YOIFS] Cannot read file: FAT is corrupted!');
+      return { success: false, error: 'FAT corrupted' };
     }
+    const meta = this.fileMetaList.find(f => f.name === fileName);
+    if (!meta) {
+      Logger.info(`[YOIFS] File '${fileName}' not found.`);
+      return { success: false, error: 'File not found' };
+    }
+    let primary: Buffer | undefined, replica: Buffer | undefined;
+    let primaryOk = false, replicaOk = false;
+    try {
+      primary = await this.disk.read(meta.offset, meta.size);
+      if (primary && this.checksum(primary) === meta.checksum) primaryOk = true;
+    } catch {}
+    try {
+      replica = await this.disk.read(meta.replicaOffset, meta.size);
+      if (replica && this.checksum(replica) === meta.checksum) replicaOk = true;
+    } catch {}
+    if (primaryOk && replicaOk && primary) {
+      return { success: true, data: primary };
+    }
+    if (primaryOk && primary) {
+      Logger.info(`[YOIFS] Only primary copy of '${fileName}' is good. Self-healing replica.`);
+      await this.disk.write(meta.replicaOffset, primary);
+      return { success: true, data: primary };
+    }
+    if (replicaOk && replica) {
+      Logger.info(`[YOIFS] Only replica copy of '${fileName}' is good. Self-healing primary.`);
+      await this.disk.write(meta.offset, replica);
+      return { success: true, data: replica };
+    }
+    Logger.error(`[YOIFS] Both copies of '${fileName}' are corrupted!`);
+    return { success: false, error: 'Corruption detected' };
   }
 
-  /**
-   * List all files in the file system
-   * 
-   * TODO: Return a list of all stored file names
-   */
   async listFiles(): Promise<FileSystemResult<string[]>> {
-    try {
-      // TODO: Implement file listing
-      // Hint: Extract file names from your metadata structure
-
-      return { success: false, error: 'Not implemented' };
-    } catch (error) {
-      return { success: false, error: `List error: ${error}` };
+    await this.loadFAT();
+    if (this.fatCorrupted) {
+      Logger.error('[YOIFS] Cannot list files: FAT is corrupted!');
+      return { success: false, error: 'FAT corrupted' };
     }
+    return { success: true, data: this.fileMetaList.map(f => f.name) };
   }
-
-  /**
-   * Optional: Health check for the entire file system
-   * This could help identify which files are corrupted
-   */
-  async checkSystemHealth(): Promise<FileSystemResult<{ healthy: number, corrupted: number; }>> {
-    // TODO: Optional - implement system-wide health check
-    // Check all files for corruption and return statistics
-
-    return { success: false, error: 'Health check not implemented' };
-  }
-
-  // helper function to calculate checksum, feel free to use this or implement your own
-  private calculateChecksum(data: Buffer): string {
-    return crypto.createHash('crc32').update(data).digest('hex');
-  }
-
 }
