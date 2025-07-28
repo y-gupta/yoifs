@@ -1,5 +1,6 @@
 import { Logger } from './index';
 import * as crypto from 'crypto';
+import { Disk } from './index';
 
 interface FileSystemResult<T> {
   success: boolean;
@@ -16,7 +17,7 @@ interface FileMeta {
 }
 
 export class FileSystem {
-  private disk: any;
+  private disk: Disk;
   private blockSize = 512;
   private fatOffset = 0;
   private fatSize = 32768; // 32 KB for FAT
@@ -24,7 +25,7 @@ export class FileSystem {
   private fatLoaded = false;
   private fatCorrupted = false;
 
-  constructor(disk: any) {
+  constructor(disk: Disk) {
     this.disk = disk;
   }
 
