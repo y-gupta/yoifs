@@ -670,7 +670,7 @@ class QualityTestHarness {
     const config = {
       cacheMaxSize: 1024 * 1024,
       cacheTTL: 60000,
-      evictionPolicy: 'LRU',
+      evictionPolicy: 'LRU' as 'LRU' | 'LFU' | 'FIFO',
       metricsInterval: 1000,
       alertThresholds: {
         latencyP95: 1000,

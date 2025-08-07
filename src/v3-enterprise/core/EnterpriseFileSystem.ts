@@ -164,7 +164,10 @@ export class EnterpriseFileSystem extends EventEmitter {
   // FILE SYSTEM OPERATIONS
   // ============================================================================
 
-  async writeFile(sessionToken: string, fileName: string, content: Buffer, owner: string): Promise<FileSystemResult<string>> {
+  async writeFile(sessionToken: string, fileName: string, content: Buffer, owner: string, options?: {
+    highRedundancy?: boolean;
+    redundancyLevel?: number;
+  }): Promise<FileSystemResult<string>> {
     const startTime = Date.now();
     
     try {
@@ -261,28 +264,10 @@ export class EnterpriseFileSystem extends EventEmitter {
           return { success: false, error: `Bandwidth quota exceeded: ${violations}` };
         }
 
-        // Decrypt content
-        try {
-          // For now, use the current active key since we're not storing key metadata
-          // In production, this should be stored with the file metadata
-          const currentKey = this.encryptionService.getCurrentKey();
-          if (!currentKey) {
-            throw new Error('No active encryption key available');
-          }
-          
-          // Parse the stored data: IV (16 bytes) + encrypted data + auth tag (16 bytes for GCM)
-          const iv = result.data.subarray(0, 16);
-          const authTag = result.data.subarray(result.data.length - 16);
-          const encryptedData = result.data.subarray(16, result.data.length - 16);
-          
-          const decryptedContent = await this.encryptionService.decrypt({
-            keyId: currentKey.id,
-            algorithm: currentKey.algorithm,
-            iv: iv,
-            encryptedData: encryptedData,
-            authTag: authTag
-          });
-
+        // Attempt decryption with corruption recovery
+        const decryptionResult = await this.attemptDecryptionWithRecovery(result.data, fileId, options);
+        
+        if (decryptionResult.success) {
           // Update bandwidth usage
           this.quotaService.updateUsage(session.userId, 'USER', 'READ', 0, result.data.length);
 
@@ -293,12 +278,12 @@ export class EnterpriseFileSystem extends EventEmitter {
           // Return with corruption report if any
           return { 
             success: true, 
-            data: decryptedContent,
-            corruptionReport: result.corruptionReport
+            data: decryptionResult.data!,
+            corruptionReport: decryptionResult.corruptionReport || result.corruptionReport
           };
-        } catch (decryptError: any) {
-          Logger.error(`[ENTERPRISE] Decryption failed for file ${fileId}: ${decryptError.message}`);
-          return { success: false, error: 'File decryption failed' };
+        } else {
+          // If decryption fails completely, return the error
+          return decryptionResult;
         }
       }
       
@@ -434,5 +419,597 @@ export class EnterpriseFileSystem extends EventEmitter {
 
   getConfig(): EnterpriseConfig {
     return { ...this.config };
+  }
+
+  // ============================================================================
+  // ADVANCED CORRUPTION RESILIENCE & ANALYTICS
+  // ============================================================================
+
+  // Write file with enhanced redundancy for critical data
+  async writeFileWithRedundancy(
+    sessionToken: string, 
+    fileName: string, 
+    content: Buffer, 
+    owner: string, 
+    redundancyLevel: number = 3
+  ): Promise<FileSystemResult<string>> {
+    const startTime = Date.now();
+    
+    try {
+      // Check authentication and permissions
+      if (!await this.checkPermission(sessionToken, 'files', 'write')) {
+        return { success: false, error: 'Permission denied' };
+      }
+
+      // Get user session for quota checking
+      const session = await this.authService.validateSession(sessionToken);
+      if (!session) {
+        return { success: false, error: 'Invalid session' };
+      }
+
+      // Check quota (redundancy increases storage usage)
+      const estimatedSize = content.length * redundancyLevel;
+      const quotaCheck = await this.quotaService.checkQuota(
+        session.userId, 
+        'USER', 
+        'WRITE', 
+        estimatedSize
+      );
+
+      if (!quotaCheck.allowed) {
+        const violations = quotaCheck.violations.map(v => `${v.quotaType}: ${v.currentUsage}/${v.limit}`).join(', ');
+        return { success: false, error: `Quota exceeded for high-redundancy storage: ${violations}` };
+      }
+
+      // Encrypt content before writing
+      const encryptedContent = await this.encryptionService.encrypt(content, {
+        fileName,
+        owner,
+        originalSize: content.length
+      });
+
+      // Combine IV + encrypted data + auth tag for storage
+      const combinedData = Buffer.concat([
+        encryptedContent.iv,
+        encryptedContent.encryptedData,
+        encryptedContent.authTag || Buffer.alloc(0)
+      ]);
+
+      // Write encrypted file with high redundancy
+      const result = await this.fileSystemCore.writeFileWithRedundancy(
+        fileName, 
+        combinedData, 
+        owner, 
+        redundancyLevel
+      );
+      
+      if (result.success) {
+        // Update quota usage with actual redundancy cost
+        this.quotaService.updateUsage(session.userId, 'USER', 'WRITE', estimatedSize);
+        
+        // Create security event for high-value file storage
+        this.monitoringService.createAlert('SECURITY', 'LOW', 
+          `High-redundancy file created: ${fileName} (${redundancyLevel}x redundancy)`,
+          { fileName, owner, redundancyLevel, size: content.length });
+      }
+      
+      // Update metrics
+      const writeTime = Date.now() - startTime;
+      this.monitoringService.updateMetrics('write_latency_redundant', writeTime);
+      
+      return result;
+
+    } catch (error: any) {
+      this.monitoringService.updateMetrics('error_rate', 1);
+      Logger.error(`[ENTERPRISE] Failed to write file '${fileName}' with redundancy: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Get comprehensive corruption and health report
+  getCorruptionReport(): {
+    detectedCorruptions: number;
+    repairedCorruptions: number;
+    unrecoverableCorruptions: number;
+    lastHealthCheck: Date;
+    corruptedChunks: string[];
+    healthScore: number;
+  } {
+    return this.fileSystemCore.getCorruptionReport();
+  }
+
+  // Get detailed performance metrics including file system core
+  getEnhancedPerformanceMetrics() {
+    const coreMetrics = this.fileSystemCore.getPerformanceMetrics();
+    const monitoringMetrics = this.monitoringService.getPerformanceMetrics();
+    
+    return {
+      ...monitoringMetrics,
+      fileSystem: coreMetrics
+    };
+  }
+
+  // Perform data tiering optimization
+  async performDataTiering(sessionToken: string): Promise<FileSystemResult<void>> {
+    try {
+      // Check admin permissions
+      if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
+        return { success: false, error: 'Admin permission required for data tiering' };
+      }
+
+      await this.fileSystemCore.performDataTiering();
+      
+      Logger.info('[ENTERPRISE] Data tiering optimization completed');
+      return { success: true };
+      
+    } catch (error: any) {
+      Logger.error(`[ENTERPRISE] Data tiering failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Get files by tier for analytics
+  getFilesByTier(): { HOT: number; WARM: number; COLD: number } {
+    return this.fileSystemCore.getFilesByTier();
+  }
+
+  // Advanced file search with enterprise filters
+  searchFiles(sessionToken: string, criteria: {
+    namePattern?: string;
+    owner?: string;
+    minSize?: number;
+    maxSize?: number;
+    tier?: 'HOT' | 'WARM' | 'COLD';
+    createdAfter?: Date;
+    createdBefore?: Date;
+    minAccessCount?: number;
+  }): Promise<FileSystemResult<any[]>> {
+    return new Promise(async (resolve) => {
+      try {
+        // Check permissions
+        if (!await this.checkPermission(sessionToken, 'files', 'search')) {
+          resolve({ success: false, error: 'Search permission denied' });
+          return;
+        }
+
+        const results = this.fileSystemCore.searchFiles(criteria);
+        
+        // Filter based on user permissions (only return files user can access)
+        const session = await this.authService.validateSession(sessionToken);
+        if (!session) {
+          resolve({ success: false, error: 'Invalid session' });
+          return;
+        }
+
+        const filteredResults = results.filter(file => 
+          file.owner === session.userId || 
+          session.roles.includes('ADMIN')
+        );
+
+        resolve({ success: true, data: filteredResults });
+        
+      } catch (error: any) {
+        Logger.error(`[ENTERPRISE] File search failed: ${error.message}`);
+        resolve({ success: false, error: error.message });
+      }
+    });
+  }
+
+  // Perform defragmentation
+  async performDefragmentation(sessionToken: string): Promise<FileSystemResult<{
+    chunksDefragmented: number;
+    spaceReclaimed: number;
+    timeElapsed: number;
+  }>> {
+    try {
+      // Check admin permissions
+      if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
+        return { success: false, error: 'Admin permission required for defragmentation' };
+      }
+
+      const result = await this.fileSystemCore.performDefragmentation();
+      
+      // Create alert for completed defragmentation
+      this.monitoringService.createAlert('PERFORMANCE', 'LOW',
+        `Defragmentation completed: ${result.spaceReclaimed} bytes reclaimed`,
+        result);
+      
+      Logger.info('[ENTERPRISE] Defragmentation completed successfully');
+      return { success: true, data: result };
+      
+    } catch (error: any) {
+      Logger.error(`[ENTERPRISE] Defragmentation failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Verify data integrity across all files
+  async verifyDataIntegrity(sessionToken: string): Promise<FileSystemResult<{
+    totalFiles: number;
+    corruptedFiles: number;
+    totalChunks: number;
+    corruptedChunks: number;
+    verificationTime: number;
+  }>> {
+    try {
+      // Check admin permissions
+      if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
+        return { success: false, error: 'Admin permission required for integrity verification' };
+      }
+
+      Logger.info('[ENTERPRISE] Starting comprehensive data integrity verification...');
+      const result = await this.fileSystemCore.verifyDataIntegrity();
+      
+      // Create alerts for any corruption found
+      if (result.corruptedFiles > 0) {
+        this.monitoringService.createAlert('SECURITY', 'HIGH',
+          `Data integrity verification found ${result.corruptedFiles} corrupted files`,
+          result);
+      }
+      
+      Logger.info('[ENTERPRISE] Data integrity verification completed');
+      return { success: true, data: result };
+      
+    } catch (error: any) {
+      Logger.error(`[ENTERPRISE] Data integrity verification failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Get optimization recommendations
+  getOptimizationRecommendations(): {
+    compressionSavings: number;
+    deduplicationSavings: number;
+    tieringRecommendations: string[];
+    defragmentationNeeded: boolean;
+    securityRecommendations: string[];
+  } {
+    const coreRecommendations = this.fileSystemCore.getOptimizationRecommendations();
+    const securityRecommendations = [];
+    
+    // Add security-specific recommendations
+    const encryptionStats = this.encryptionService.getEncryptionStats();
+    // Check if keys need rotation (simplified check)
+    if (encryptionStats.expiredKeys > 0) {
+      securityRecommendations.push(`${encryptionStats.expiredKeys} encryption keys need rotation`);
+    }
+    
+    const authMetrics = this.authService.getActiveSessions();
+    if (authMetrics > 100) {
+      securityRecommendations.push('High number of active sessions - consider session timeout review');
+    }
+    
+    return {
+      ...coreRecommendations,
+      securityRecommendations
+    };
+  }
+
+  // Get comprehensive system health report
+  getSystemHealthReport(): {
+    corruption: any;
+    performance: any;
+    security: any;
+    quotas: any;
+    caching: any;
+    recommendations: any;
+    uptime: number;
+  } {
+    return {
+      corruption: this.getCorruptionReport(),
+      performance: this.getEnhancedPerformanceMetrics(),
+      security: {
+        activeSessions: this.authService.getActiveSessions(),
+        securityEvents: this.authService.getSecurityEvents(10).length,
+        encryptionStatus: this.encryptionService.getEncryptionStats()
+      },
+      quotas: this.quotaService.getQuotaStats(),
+      caching: this.cacheService.getStats(),
+      recommendations: this.getOptimizationRecommendations(),
+      uptime: this.getSystemUptime()
+    };
+  }
+
+  // ============================================================================
+  // CORRUPTION RECOVERY METHODS
+  // ============================================================================
+
+  /**
+   * Attempts decryption with corruption recovery fallback mechanisms
+   */
+  private async attemptDecryptionWithRecovery(
+    data: Buffer, 
+    fileId: string, 
+    options?: ReadOptions
+  ): Promise<PartialFileResult> {
+    try {
+      // Try standard decryption first
+      const currentKey = this.encryptionService.getCurrentKey();
+      if (!currentKey) {
+        throw new Error('No active encryption key available');
+      }
+      
+      // Parse the stored data: IV (16 bytes) + encrypted data + auth tag (16 bytes for GCM)
+      if (data.length < 32) {
+        throw new Error('Data too short to contain valid encryption headers');
+      }
+      
+      const iv = data.subarray(0, 16);
+      const authTag = data.subarray(data.length - 16);
+      const encryptedData = data.subarray(16, data.length - 16);
+      
+      const decryptedContent = await this.encryptionService.decrypt({
+        keyId: currentKey.id,
+        algorithm: currentKey.algorithm,
+        iv: iv,
+        encryptedData: encryptedData,
+        authTag: authTag
+      });
+
+      return { 
+        success: true, 
+        data: decryptedContent
+      };
+      
+    } catch (decryptError: any) {
+      Logger.warning(`[ENTERPRISE] Primary decryption failed for ${fileId}: ${decryptError.message}`);
+      
+      // Try recovery strategies based on options
+      if (options?.allowPartialRecovery) {
+        return await this.attemptCorruptionRecovery(data, fileId, options);
+      } else {
+        // Try basic corruption-tolerant decryption without full recovery
+        return await this.attemptBasicRecovery(data, fileId);
+      }
+    }
+  }
+
+  /**
+   * Basic recovery for encrypted files with minor corruption
+   */
+  private async attemptBasicRecovery(data: Buffer, fileId: string): Promise<PartialFileResult> {
+    try {
+      Logger.info(`[ENTERPRISE] Attempting basic corruption recovery for ${fileId}`);
+      
+      // For encrypted files, we can try to recover by checking if it's actually
+      // a corruption in the underlying file system data rather than encryption
+      
+      // Try to read the file again with corruption recovery from core FS
+      const coreRecoveryResult = await this.fileSystemCore.readFile(fileId, {
+        allowPartialRecovery: true,
+        fillCorruptedChunks: 'zeros',
+        minimumRecoveryRate: 50
+      });
+      
+      if (coreRecoveryResult.success && coreRecoveryResult.data) {
+        // Try decryption on the recovered data
+        try {
+          const currentKey = this.encryptionService.getCurrentKey();
+          if (!currentKey) {
+            throw new Error('No active encryption key available');
+          }
+          
+          const recoveredData = coreRecoveryResult.data;
+          if (recoveredData.length >= 32) {
+            const iv = recoveredData.subarray(0, 16);
+            const authTag = recoveredData.subarray(recoveredData.length - 16);
+            const encryptedData = recoveredData.subarray(16, recoveredData.length - 16);
+            
+            const decryptedContent = await this.encryptionService.decrypt({
+              keyId: currentKey.id,
+              algorithm: currentKey.algorithm,
+              iv: iv,
+              encryptedData: encryptedData,
+              authTag: authTag
+            });
+
+            Logger.success(`[ENTERPRISE] Basic corruption recovery successful for ${fileId}`);
+            return { 
+              success: true, 
+              data: decryptedContent,
+              corruptionReport: coreRecoveryResult.corruptionReport
+            };
+          }
+        } catch (retryError: any) {
+          Logger.warning(`[ENTERPRISE] Recovery decryption failed for ${fileId}: ${retryError.message}`);
+        }
+      }
+      
+      // If recovery fails, return a graceful error instead of complete failure
+      Logger.warning(`[ENTERPRISE] Could not recover corrupted file ${fileId}`);
+      return { 
+        success: false, 
+        error: 'File corrupted and could not be recovered',
+        corruptionReport: {
+          totalChunks: 1,
+          corruptedChunks: 1,
+          recoveredChunks: 0,
+          recoveryRate: 0,
+          corruptedChunkRefs: [fileId],
+          partialDataAvailable: false
+        }
+      };
+      
+    } catch (recoveryError: any) {
+      Logger.error(`[ENTERPRISE] Corruption recovery failed for ${fileId}: ${recoveryError.message}`);
+      return { 
+        success: false, 
+        error: 'File corrupted and recovery failed'
+      };
+    }
+  }
+
+  /**
+   * Advanced corruption recovery with partial data reconstruction
+   */
+  private async attemptCorruptionRecovery(
+    data: Buffer, 
+    fileId: string, 
+    options: ReadOptions
+  ): Promise<PartialFileResult> {
+    try {
+      Logger.info(`[ENTERPRISE] Attempting advanced corruption recovery for ${fileId}`);
+      
+      // Use core file system's partial recovery capabilities
+      const recoveryResult = await this.fileSystemCore.readFile(fileId, {
+        allowPartialRecovery: true,
+        fillCorruptedChunks: options.fillCorruptedChunks || 'zeros',
+        minimumRecoveryRate: options.minimumRecoveryRate || 50
+      });
+      
+      if (recoveryResult.success && recoveryResult.data) {
+        // Try to decrypt recovered data
+        const decryptionResult = await this.attemptPartialDecryption(
+          recoveryResult.data, 
+          fileId,
+          recoveryResult.corruptionReport
+        );
+        
+        if (decryptionResult.success) {
+          Logger.success(`[ENTERPRISE] Advanced corruption recovery successful for ${fileId}`);
+          return decryptionResult;
+        }
+      }
+      
+      // If advanced recovery fails, provide partial data based on strategy
+      return this.createPartialRecoveryResult(fileId, options, data);
+      
+    } catch (error: any) {
+      Logger.error(`[ENTERPRISE] Advanced corruption recovery failed for ${fileId}: ${error.message}`);
+      return { success: false, error: 'Advanced recovery failed' };
+    }
+  }
+
+  /**
+   * Attempts partial decryption on recovered data
+   */
+  private async attemptPartialDecryption(
+    recoveredData: Buffer, 
+    fileId: string, 
+    corruptionReport?: any
+  ): Promise<PartialFileResult> {
+    try {
+      if (recoveredData.length < 32) {
+        throw new Error('Recovered data too short for decryption');
+      }
+      
+      const currentKey = this.encryptionService.getCurrentKey();
+      if (!currentKey) {
+        throw new Error('No active encryption key available');
+      }
+      
+      const iv = recoveredData.subarray(0, 16);
+      const authTag = recoveredData.subarray(recoveredData.length - 16);
+      const encryptedData = recoveredData.subarray(16, recoveredData.length - 16);
+      
+      try {
+        const decryptedContent = await this.encryptionService.decrypt({
+          keyId: currentKey.id,
+          algorithm: currentKey.algorithm,
+          iv: iv,
+          encryptedData: encryptedData,
+          authTag: authTag
+        });
+
+        return { 
+          success: true, 
+          data: decryptedContent,
+          corruptionReport: corruptionReport
+        };
+      } catch (authError) {
+        // If authentication tag fails, try with modified auth tag (corruption recovery)
+        Logger.warning(`[ENTERPRISE] Authentication failed, attempting recovery mode for ${fileId}`);
+        
+        // In a real implementation, you might try different recovery strategies here
+        // For now, we'll return a partial success with warning
+        return { 
+          success: false, 
+          error: 'File partially corrupted - authentication failed',
+          corruptionReport: corruptionReport
+        };
+      }
+      
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: `Partial decryption failed: ${error.message}`,
+        corruptionReport: corruptionReport
+      };
+    }
+  }
+
+  /**
+   * Creates a partial recovery result based on recovery strategy
+   */
+  private createPartialRecoveryResult(
+    fileId: string, 
+    options: ReadOptions, 
+    originalData: Buffer
+  ): PartialFileResult {
+    const strategy = options.fillCorruptedChunks || 'zeros';
+    
+    Logger.info(`[ENTERPRISE] Creating partial recovery result with ${strategy} strategy for ${fileId}`);
+    
+    // Create placeholder content based on strategy
+    let placeholderContent: Buffer;
+    
+    switch (strategy) {
+      case 'zeros':
+        placeholderContent = Buffer.alloc(Math.max(100, originalData.length / 10));
+        break;
+      case 'pattern':
+        const pattern = Buffer.from('CORRUPTED_DATA_RECOVERED\n');
+        placeholderContent = Buffer.concat(Array(5).fill(pattern));
+        break;
+      case 'skip':
+        placeholderContent = Buffer.from('FILE_CORRUPTED_CONTENT_SKIPPED');
+        break;
+      default:
+        placeholderContent = Buffer.from('PARTIAL_RECOVERY_PLACEHOLDER');
+    }
+    
+    // Create a corruption report
+    const corruptionReport = {
+      totalChunks: 1,
+      corruptedChunks: 1,
+      recoveredChunks: 0,
+      recoveryRate: 0,
+      corruptedChunkRefs: [fileId],
+      partialDataAvailable: true
+    };
+    
+    // Return success with partial data if minimum recovery rate is met
+    const recoveryRate = 0; // Placeholder data = 0% actual recovery
+    if (recoveryRate >= (options.minimumRecoveryRate || 50)) {
+      return {
+        success: true,
+        data: placeholderContent,
+        corruptionReport: corruptionReport
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Recovery rate below minimum threshold',
+        corruptionReport: corruptionReport
+      };
+    }
+  }
+
+  // Enhanced shutdown with proper resource cleanup
+  async shutdown(): Promise<void> {
+    Logger.info('[ENTERPRISE] Initiating enterprise file system shutdown...');
+    
+    // Get final statistics
+    const finalReport = this.getSystemHealthReport();
+    Logger.info('[ENTERPRISE] Final System Health Report: ' + JSON.stringify(finalReport, null, 2));
+    
+    // Shutdown all services
+    this.fileSystemCore.shutdown();
+    this.authService.shutdown();
+    
+    // Clear event listeners
+    this.removeAllListeners();
+    
+    Logger.info('[ENTERPRISE] Enterprise file system shutdown complete');
   }
 }

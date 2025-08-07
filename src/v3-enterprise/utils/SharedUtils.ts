@@ -80,7 +80,7 @@ export class SharedUtils {
   /**
    * Validate configuration values
    */
-  static validateConfigValue(value: number, min: number, max?: number, name: string): string[] {
+  static validateConfigValue(value: number, min: number, name: string, max?: number): string[] {
     const errors: string[] = [];
     
     if (value < min) {

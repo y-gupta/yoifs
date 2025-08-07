@@ -9,26 +9,49 @@ import {
 } from '../types';
 import { Logger } from '../../v1-basic/index';
 import { SharedUtils } from '../utils/SharedUtils';
+import * as bcrypt from 'crypto'; // Using crypto for simple hashing demo
 
 export class AuthenticationService extends EventEmitter {
   private users = new Map<string, { password: string; roles: string[]; mfaEnabled: boolean }>();
   private sessions = new Map<string, SessionToken>();
   private securityEvents: SecurityEvent[] = [];
   private config: SecurityConfig;
+  private cleanupInterval?: NodeJS.Timeout;
+  private maxSecurityEvents = 1000; // Limit security events to prevent memory leaks
 
   constructor(config: SecurityConfig) {
     super();
     this.config = config;
     this.initializeDefaultRoles();
+    this.startAutomaticCleanup();
+  }
+
+  private hashPassword(password: string, salt: string): string {
+    // Simple PBKDF2 hashing for demo (in production, use bcrypt or argon2)
+    return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  }
+
+  private generateSalt(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  private verifyPassword(password: string, hash: string, salt: string): boolean {
+    const computedHash = this.hashPassword(password, salt);
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(computedHash, 'hex'));
   }
 
   private initializeDefaultRoles(): void {
-    // Create default admin user
+    // Create default admin user with hashed password
+    const salt = this.generateSalt();
+    const hashedPassword = this.hashPassword('admin123', salt);
+    
     this.users.set('admin', {
-      password: 'admin123', // In production, use bcrypt hashed passwords
+      password: `${hashedPassword}:${salt}`, // Store hash:salt format
       roles: ['ADMIN'],
       mfaEnabled: false
     });
+    
+    Logger.info('[AUTH] Default admin user created with hashed password');
   }
 
   async authenticateUser(credentials: UserCredentials): Promise<AuthResult> {
@@ -41,8 +64,9 @@ export class AuthenticationService extends EventEmitter {
         return { success: false, error: 'Invalid credentials' };
       }
 
-      // Verify password (in production, use bcrypt)
-      if (user.password !== credentials.password) {
+      // Verify password using hash comparison
+      const [storedHash, salt] = user.password.split(':');
+      if (!this.verifyPassword(credentials.password, storedHash, salt)) {
         this.logSecurityEvent(credentials.username, 'AUTH_FAILED', 'user', 'FAILURE', { reason: 'invalid_password' });
         return { success: false, error: 'Invalid credentials' };
       }
@@ -106,7 +130,16 @@ export class AuthenticationService extends EventEmitter {
   }
 
   async createUser(username: string, password: string, roles: string[]): Promise<void> {
-    this.users.set(username, { password, roles, mfaEnabled: false });
+    // Hash the password before storing
+    const salt = this.generateSalt();
+    const hashedPassword = this.hashPassword(password, salt);
+    
+    this.users.set(username, { 
+      password: `${hashedPassword}:${salt}`,
+      roles, 
+      mfaEnabled: false 
+    });
+    
     this.logSecurityEvent('system', 'USER_CREATED', 'user', 'SUCCESS', { username, roles });
     Logger.info(`[AUTH] User ${username} created with roles: ${roles.join(', ')}`);
   }
@@ -168,11 +201,50 @@ export class AuthenticationService extends EventEmitter {
 
   cleanupExpiredSessions(): void {
     const now = new Date();
+    let expiredCount = 0;
+    
     for (const [sessionId, session] of this.sessions.entries()) {
       if (session.expiresAt < now) {
         this.sessions.delete(sessionId);
         this.logSecurityEvent(session.userId, 'SESSION_EXPIRED', 'session', 'SUCCESS');
+        expiredCount++;
       }
     }
+    
+    if (expiredCount > 0) {
+      Logger.info(`[AUTH] Cleaned up ${expiredCount} expired sessions`);
+    }
+  }
+
+  private startAutomaticCleanup(): void {
+    // Clean up expired sessions every 5 minutes
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupExpiredSessions();
+      this.cleanupSecurityEvents();
+    }, 5 * 60 * 1000); // 5 minutes
+    
+    Logger.info('[AUTH] Automatic cleanup started');
+  }
+
+  private cleanupSecurityEvents(): void {
+    // Keep only the most recent security events to prevent memory leaks
+    if (this.securityEvents.length > this.maxSecurityEvents) {
+      const eventsToRemove = this.securityEvents.length - this.maxSecurityEvents;
+      this.securityEvents.splice(0, eventsToRemove);
+      Logger.info(`[AUTH] Cleaned up ${eventsToRemove} old security events`);
+    }
+  }
+
+  shutdown(): void {
+    // Clean up resources when shutting down
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    
+    // Clear all sessions and events
+    this.sessions.clear();
+    this.securityEvents.length = 0;
+    
+    Logger.info('[AUTH] AuthenticationService shut down');
   }
 }

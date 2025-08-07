@@ -7,9 +7,8 @@
     "dev": "ts-node src/v1-basic/index.ts",
     "version1": "ts-node src/v1-basic/index.ts",
     "version2": "ts-node src/v2-enhanced/version2-enhanced-test.ts",
-    "version3": "ts-node src/v3-enterprise/test-modular.ts",
-    "version3-quota": "ts-node src/v3-enterprise/test-quota-encryption.ts",
-    "version3-recovery": "ts-node src/v3-enterprise/test-partial-recovery.ts",
+    "version3": "ts-node src/v3-enterprise/test-enterprise.ts",
+    "simple-test": "ts-node simple-version-test.ts",
     "quality-test": "ts-node quality-test.ts"
   },
   "keywords": [],

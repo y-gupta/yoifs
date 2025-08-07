@@ -146,7 +146,26 @@ export class EnhancedFileSystem {
     if (this.metadataLoaded && !this.metadataCorrupted) return;
 
     try {
+      // Check if disk has any data at metadata offset
+      const diskSize = this.disk.size ? this.disk.size() : Infinity;
+      if (diskSize < this.metadataSize) {
+        Logger.info('[YOIFS] Disk is too small or empty, initializing fresh metadata.');
+        this.initializeFreshMetadata();
+        this.metadataLoaded = true;
+        return;
+      }
+
       const raw = await this.disk.read(this.metadataOffset, this.metadataSize);
+      
+      // Check if the raw data is all zeros (empty disk)
+      const isEmpty = raw.every(byte => byte === 0);
+      if (isEmpty) {
+        Logger.info('[YOIFS] Empty disk detected, initializing fresh metadata.');
+        this.initializeFreshMetadata();
+        this.metadataLoaded = true;
+        return;
+      }
+
       const sections: MetadataSection[] = [];
 
       // Parse all metadata sections
@@ -160,10 +179,8 @@ export class EnhancedFileSystem {
       }
 
       if (sections.length === 0) {
-        Logger.error('[YOIFS] No valid metadata sections found!');
-        this.metadataCorrupted = true;
-        this.metadata.primary = this.createEmptyMetadataSection();
-        this.metadata.backups = [];
+        Logger.info('[YOIFS] No valid metadata sections found, initializing fresh metadata.');
+        this.initializeFreshMetadata();
       } else {
         // Use the most recent valid section as primary
         sections.sort((a, b) => (b.modifiedAt || 0) - (a.modifiedAt || 0));
@@ -172,14 +189,20 @@ export class EnhancedFileSystem {
         this.metadataCorrupted = false;
         Logger.info(`[YOIFS] Metadata loaded (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
       }
-    } catch (error) {
-      Logger.error('[YOIFS] Could not load metadata! Disk might be empty or corrupted.');
-      this.metadata.primary = this.createEmptyMetadataSection();
-      this.metadata.backups = [];
-      this.metadataCorrupted = true;
+    } catch (error: any) {
+      Logger.warning(`[YOIFS] Could not load metadata: ${error.message}. Initializing fresh metadata.`);
+      this.initializeFreshMetadata();
     }
 
     this.metadataLoaded = true;
+  }
+
+  private initializeFreshMetadata(): void {
+    this.metadata.primary = this.createEmptyMetadataSection();
+    this.metadata.primary.modifiedAt = Date.now();
+    this.metadata.backups = [];
+    this.metadataCorrupted = false;
+    Logger.info('[YOIFS] Fresh metadata initialized successfully.');
   }
 
   private parseMetadataSection(data: Buffer): MetadataSection | null {
@@ -230,38 +253,63 @@ export class EnhancedFileSystem {
   }
 
   private async saveMetadata(): Promise<void> {
-    if (this.metadataCorrupted) {
-      Logger.error('[YOIFS] Cannot save metadata: metadata is corrupted!');
-      throw new Error('Metadata corrupted');
+    try {
+      // Update modification time
+      this.metadata.primary.modifiedAt = Date.now();
+
+      // Calculate checksum
+      const metadataString = JSON.stringify({
+        version: this.metadata.primary.version,
+        files: this.metadata.primary.files,
+        chunks: Object.fromEntries(this.metadata.primary.chunks),
+        freeSpace: this.metadata.primary.freeSpace,
+        modifiedAt: this.metadata.primary.modifiedAt
+      });
+      this.metadata.primary.checksum = this.calculateChecksum(Buffer.from(metadataString));
+
+      // Create backup sections (deep copy to avoid reference issues)
+      const backupSections: MetadataSection[] = [];
+      for (let i = 0; i < this.metadataSections; i++) {
+        const backupSection: MetadataSection = {
+          version: this.metadata.primary.version,
+          files: JSON.parse(JSON.stringify(this.metadata.primary.files)),
+          chunks: new Map(this.metadata.primary.chunks),
+          freeSpace: JSON.parse(JSON.stringify(this.metadata.primary.freeSpace)),
+          checksum: this.metadata.primary.checksum,
+          modifiedAt: this.metadata.primary.modifiedAt
+        };
+        backupSections.push(backupSection);
+      }
+
+      // Write all sections
+      const buf = Buffer.alloc(this.metadataSize, 0);
+      for (let i = 0; i < backupSections.length; i++) {
+        const sectionString = JSON.stringify({
+          version: backupSections[i].version,
+          files: backupSections[i].files,
+          chunks: Object.fromEntries(backupSections[i].chunks),
+          freeSpace: backupSections[i].freeSpace,
+          checksum: backupSections[i].checksum,
+          modifiedAt: backupSections[i].modifiedAt
+        });
+        const sectionData = Buffer.from(sectionString);
+        const sectionStart = i * this.sectionSize;
+        
+        if (sectionData.length > this.sectionSize) {
+          Logger.warning(`[YOIFS] Metadata section ${i} too large (${sectionData.length} > ${this.sectionSize}), truncating`);
+        }
+        
+        sectionData.copy(buf, sectionStart, 0, Math.min(sectionData.length, this.sectionSize));
+      }
+
+      await this.disk.write(this.metadataOffset, buf);
+      this.metadataCorrupted = false; // Mark as not corrupted after successful save
+      Logger.info(`[YOIFS] Metadata saved (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
+    } catch (error: any) {
+      Logger.error(`[YOIFS] Failed to save metadata: ${error.message}`);
+      this.metadataCorrupted = true;
+      throw error;
     }
-
-    // Update modification time
-    this.metadata.primary.modifiedAt = Date.now();
-
-    // Calculate checksum
-    const metadataString = JSON.stringify({
-      files: this.metadata.primary.files,
-      chunks: Object.fromEntries(this.metadata.primary.chunks),
-      freeSpace: this.metadata.primary.freeSpace
-    });
-    this.metadata.primary.checksum = this.calculateChecksum(Buffer.from(metadataString));
-
-    // Create backup sections
-    const backupSections = [this.metadata.primary];
-    for (let i = 1; i < this.metadataSections; i++) {
-      backupSections.push({ ...this.metadata.primary });
-    }
-
-    // Write all sections
-    const buf = Buffer.alloc(this.metadataSize, 0);
-    for (let i = 0; i < backupSections.length; i++) {
-      const sectionData = Buffer.from(JSON.stringify(backupSections[i]));
-      const sectionStart = i * this.sectionSize;
-      sectionData.copy(buf, sectionStart, 0, Math.min(sectionData.length, this.sectionSize));
-    }
-
-    await this.disk.write(this.metadataOffset, buf);
-    Logger.info(`[YOIFS] Metadata saved (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
   }
 
   private getNextOffset(): number {

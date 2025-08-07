@@ -113,11 +113,15 @@ export class FileSystem {
     try {
       primary = await this.disk.read(meta.offset, meta.size);
       if (primary && this.calculateChecksum(primary) === meta.checksum) primaryOk = true;
-    } catch {}
+    } catch (error: any) {
+      Logger.warning(`[YOIFS] Failed to read primary copy: ${error.message}`);
+    }
     try {
       replica = await this.disk.read(meta.replicaOffset, meta.size);
       if (replica && this.calculateChecksum(replica) === meta.checksum) replicaOk = true;
-    } catch {}
+    } catch (error: any) {
+      Logger.warning(`[YOIFS] Failed to read replica copy: ${error.message}`);
+    }
     if (primaryOk && replicaOk && primary) {
       return { success: true, data: primary };
     }
