@@ -1,6 +1,6 @@
-import { Logger } from './index';
-import { EnhancedFileSystem } from './enhanced-solution';
-import { MemoryDisk, CorruptionSimulator, TestUtils } from './index';
+import { Logger } from '../v1-basic/index';
+import { EnhancedFileSystem } from './version2-enhanced-solution';
+import { MemoryDisk, CorruptionSimulator, TestUtils } from '../v1-basic/index';
 
 class EnhancedTestHarness {
   private disk: MemoryDisk;

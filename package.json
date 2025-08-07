@@ -4,9 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node index.ts",
-    "enhanced": "ts-node enhanced-test.ts",
-    "enterprise": "ts-node enterprise-test.ts"
+    "dev": "ts-node src/v1-basic/index.ts",
+    "version1": "ts-node src/v1-basic/index.ts",
+    "version2": "ts-node src/v2-enhanced/version2-enhanced-test.ts",
+    "version3": "ts-node src/v3-enterprise/test-modular.ts",
+    "version3-quota": "ts-node src/v3-enterprise/test-quota-encryption.ts",
+    "quality-test": "ts-node quality-test.ts"
   },
   "keywords": [],
   "author": "",

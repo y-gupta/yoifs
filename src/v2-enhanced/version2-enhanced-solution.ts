@@ -1,6 +1,6 @@
-import { Logger } from './index';
+import { Logger } from '../v1-basic/index';
 import * as crypto from 'crypto';
-import { Disk } from './index';
+import { Disk } from '../v1-basic/index';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
 
@@ -136,7 +136,7 @@ export class EnhancedFileSystem {
         Logger.info(`[YOIFS] Primary metadata loaded (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
       } else {
         // Check if this is an empty disk (all zeros)
-        const isEmpty = primaryData.every(byte => byte === 0);
+        const isEmpty = primaryData.every((byte: number) => byte === 0);
         if (isEmpty) {
           Logger.info('[YOIFS] Empty disk detected, initializing fresh metadata.');
           this.metadata.primary = this.createEmptyMetadataSection();
@@ -254,7 +254,7 @@ export class EnhancedFileSystem {
     metadataBuffer.write(json);
 
     // Write to all sections (primary + backups)
-    const writePromises = [];
+    const writePromises: Promise<void>[] = [];
     for (let i = 0; i < this.metadataSections; i++) {
       const offset = this.metadataOffset + (i * this.sectionSize);
       writePromises.push(this.disk.write(offset, metadataBuffer));
