@@ -1,8 +1,8 @@
-import { Logger } from './src/v1-basic/index';
-import { MemoryDisk, CorruptionSimulator, TestUtils } from './src/v1-basic/index';
-import { FileSystem } from './src/v1-basic/version1-basic-solution';
-import { EnhancedFileSystem } from './src/v2-enhanced/version2-enhanced-solution';
-import { createEnterpriseFileSystem } from './src/v3-enterprise/index';
+import { Logger } from '../src/v1-basic/index';
+import { MemoryDisk, CorruptionSimulator, TestUtils } from '../src/v1-basic/index';
+import { FileSystem } from '../src/v1-basic/version1-basic-solution';
+import { EnhancedFileSystem } from '../src/v2-enhanced/version2-enhanced-solution';
+import { createEnterpriseFileSystem } from '../src/v3-enterprise/index';
 
 class SimpleVersionTest {
   private version: string;

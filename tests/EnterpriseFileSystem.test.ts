@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { MemoryDisk } from '../../../v1-basic/index';
-import { EnterpriseFileSystem } from '../../core/EnterpriseFileSystem';
-import { createEnterpriseConfig } from '../../utils/ConfigFactory';
-import { ErrorCodes, FileSystemError } from '../../types';
+import { MemoryDisk } from '../src/v1-basic/index';
+import { EnterpriseFileSystem } from '../src/v3-enterprise/core/EnterpriseFileSystem';
+import { ConfigFactory } from '../src/v3-enterprise/utils/ConfigFactory';
+import { ErrorCodes, FileSystemError } from '../src/v3-enterprise/types';
 
 describe('EnterpriseFileSystem', () => {
   let disk: MemoryDisk;
@@ -11,7 +11,7 @@ describe('EnterpriseFileSystem', () => {
 
   beforeEach(async () => {
     disk = new MemoryDisk(1024 * 1024); // 1MB
-    const config = createEnterpriseConfig('testing');
+    const config = ConfigFactory.createDevelopmentConfig();
     fileSystem = new EnterpriseFileSystem(disk, config);
     
     // Get admin token for tests
@@ -282,7 +282,7 @@ describe('EnterpriseFileSystem', () => {
       const defragResult = await fileSystem.performDefragmentation(adminToken);
       expect(defragResult.success).toBe(true);
       expect(defragResult.data).toBeDefined();
-      expect(defragResult.data.timeElapsed).toBeGreaterThan(0);
+      expect(defragResult.data!.timeElapsed).toBeGreaterThan(0);
     });
   });
 
@@ -297,12 +297,12 @@ describe('EnterpriseFileSystem', () => {
       const securityEvents = fileSystem.getSecurityEvents(10);
       expect(securityEvents.length).toBeGreaterThan(0);
       
-      const failedAuthEvent = securityEvents.find(e => e.action === 'AUTH_FAILED');
+      const failedAuthEvent = securityEvents.find((e: any) => e.action === 'AUTH_FAILED');
       expect(failedAuthEvent).toBeDefined();
     });
 
     it('should create alerts for security violations', (done) => {
-      fileSystem.on('alert', (alert) => {
+      fileSystem.on('alert', (alert: any) => {
         expect(alert).toBeDefined();
         expect(alert.type).toBe('SECURITY');
         done();
@@ -350,7 +350,7 @@ describe('EnterpriseFileSystem', () => {
       expect(searchResult.data).toBeDefined();
       expect(searchResult.data!.length).toBeGreaterThan(0);
       
-      const foundFile = searchResult.data!.find(f => f.name.includes('search-test'));
+      const foundFile = searchResult.data!.find((f: any) => f.name.includes('search-test'));
       expect(foundFile).toBeDefined();
     });
 
@@ -361,7 +361,7 @@ describe('EnterpriseFileSystem', () => {
       const integrityResult = await fileSystem.verifyDataIntegrity(adminToken);
       expect(integrityResult.success).toBe(true);
       expect(integrityResult.data).toBeDefined();
-      expect(integrityResult.data.totalFiles).toBeGreaterThan(0);
+      expect(integrityResult.data!.totalFiles).toBeGreaterThan(0);
     });
   });
 
@@ -415,7 +415,7 @@ describe('EnterpriseFileSystem', () => {
     it('should handle file not found errors', async () => {
       const result = await fileSystem.readFile(adminToken, 'nonexistent-file-id');
       expect(result.success).toBe(false);
-      expect(result.error?.code).toBe(ErrorCodes.FILE_NOT_FOUND);
+      expect((result.error as unknown as FileSystemError)?.code).toBe(ErrorCodes.FILE_NOT_FOUND);
     });
 
     it('should handle session expired errors', async () => {

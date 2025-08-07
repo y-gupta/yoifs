@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { MemoryDisk } from '../../../v1-basic/index';
-import { EnterpriseFileSystem } from '../../core/EnterpriseFileSystem';
-import { createEnterpriseConfig } from '../../utils/ConfigFactory';
-
+import { MemoryDisk } from '../src/v1-basic/index';
+import { EnterpriseFileSystem } from '../src/v3-enterprise/core/EnterpriseFileSystem';
+import { ConfigFactory } from '../src/v3-enterprise/utils/ConfigFactory';
+import { ErrorCodes } from '../src/v3-enterprise/types';
 describe('Enterprise Workflows Integration Tests', () => {
   let disk: MemoryDisk;
   let fileSystem: EnterpriseFileSystem;
@@ -12,7 +12,7 @@ describe('Enterprise Workflows Integration Tests', () => {
 
   beforeEach(async () => {
     disk = new MemoryDisk(10 * 1024 * 1024); // 10MB
-    const config = createEnterpriseConfig('production');
+    const config = ConfigFactory.createProductionConfig();
     fileSystem = new EnterpriseFileSystem(disk, config);
     
     // Setup test users
@@ -89,11 +89,11 @@ describe('Enterprise Workflows Integration Tests', () => {
       // 4. Verify data integrity after critical operations
       const integrityResult = await fileSystem.verifyDataIntegrity(adminToken);
       expect(integrityResult.success).toBe(true);
-      expect(integrityResult.data.corruptedFiles).toBe(0);
+      expect(integrityResult.data!.corruptedFiles).toBe(0);
 
       // 5. Check security audit trail
       const securityEvents = fileSystem.getSecurityEvents(50);
-      const fileAccessEvents = securityEvents.filter(e => 
+      const fileAccessEvents = securityEvents.filter((e: any) => 
         e.action.includes('FILE') || e.action.includes('READ') || e.action.includes('WRITE')
       );
       expect(fileAccessEvents.length).toBeGreaterThan(0);
@@ -120,8 +120,8 @@ describe('Enterprise Workflows Integration Tests', () => {
       expect(readResult.success).toBe(true);
 
       const auditEvents = fileSystem.getSecurityEvents();
-      const accessEvent = auditEvents.find(e => 
-        e.action.includes('READ') && e.userId === 'employee'
+      const accessEvent = auditEvents.find((e: any) => 
+        e.action.includes('read') && e.userId === 'employee'
       );
       expect(accessEvent).toBeDefined();
 
@@ -233,12 +233,12 @@ describe('Enterprise Workflows Integration Tests', () => {
       }
 
       // 2. Simulate catastrophic disk corruption (50% of disk corrupted)
-      const corruptionSize = Math.floor(disk.getSize() * 0.5);
+      const corruptionSize = Math.floor(disk.size() * 0.5);
       const corruptionData = Buffer.alloc(corruptionSize, 0xFF);
       
       // Corrupt random locations
       for (let i = 0; i < 10; i++) {
-        const randomOffset = Math.floor(Math.random() * (disk.getSize() - corruptionSize));
+        const randomOffset = Math.floor(Math.random() * (disk.size() - corruptionSize));
         await disk.write(randomOffset, corruptionData.subarray(0, Math.floor(corruptionSize / 10)));
       }
 
@@ -371,10 +371,10 @@ describe('Enterprise Workflows Integration Tests', () => {
       // 2. Generate audit report
       const securityEvents = fileSystem.getSecurityEvents(100);
       const auditReport = {
-        fileOperations: securityEvents.filter(e => e.resource === 'files'),
-        authEvents: securityEvents.filter(e => e.action.includes('AUTH')),
-        successfulOps: securityEvents.filter(e => e.result === 'SUCCESS'),
-        failedOps: securityEvents.filter(e => e.result === 'FAILURE'),
+        fileOperations: securityEvents.filter((e: any) => e.resource === 'files'),
+        authEvents: securityEvents.filter((e: any) => e.action.includes('AUTH')),
+        successfulOps: securityEvents.filter((e: any) => e.result === 'SUCCESS'),
+        failedOps: securityEvents.filter((e: any) => e.result === 'FAILURE'),
         timeRange: {
           start: securityEvents[securityEvents.length - 1]?.timestamp,
           end: securityEvents[0]?.timestamp
@@ -391,7 +391,7 @@ describe('Enterprise Workflows Integration Tests', () => {
       expect(allFiles.success).toBe(true);
       
       // All files should have required metadata for compliance
-      const filesWithCompleteMetadata = allFiles.data!.filter(file => 
+      const filesWithCompleteMetadata = allFiles.data!.filter((file: any) => 
         file.owner && file.createdAt && file.lastAccessed
       );
       expect(filesWithCompleteMetadata.length).toBe(allFiles.data!.length);
