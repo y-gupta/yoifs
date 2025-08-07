@@ -2,10 +2,32 @@
 // ENTERPRISE FILE SYSTEM TYPES
 // ============================================================================
 
+// Enhanced error handling with structured error codes
+export enum ErrorCodes {
+  PERMISSION_DENIED = 'PERMISSION_DENIED',
+  FILE_NOT_FOUND = 'FILE_NOT_FOUND',
+  QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
+  ENCRYPTION_FAILED = 'ENCRYPTION_FAILED',
+  AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
+  SESSION_EXPIRED = 'SESSION_EXPIRED',
+  CORRUPTION_DETECTED = 'CORRUPTION_DETECTED',
+  INVALID_INPUT = 'INVALID_INPUT',
+  SYSTEM_ERROR = 'SYSTEM_ERROR',
+  RATE_LIMITED = 'RATE_LIMITED'
+}
+
+export interface FileSystemError {
+  code: ErrorCodes;
+  message: string;
+  context?: Record<string, unknown>;
+  timestamp: Date;
+  correlationId?: string;
+}
+
 export interface FileSystemResult<T> {
   success: boolean;
   data?: T;
-  error?: string;
+  error?: FileSystemError;
 }
 
 // ============================================================================
@@ -243,4 +265,84 @@ export interface EnterpriseConfig {
   performance: PerformanceConfig;
   backup: BackupConfig;
   quota: QuotaConfig;
+}
+
+// ============================================================================
+// LOGGING & OBSERVABILITY TYPES
+// ============================================================================
+
+export interface LogContext {
+  userId?: string;
+  sessionId?: string;
+  operation: string;
+  duration?: number;
+  correlationId: string;
+  timestamp: Date;
+  metadata?: Record<string, unknown>;
+}
+
+export interface StructuredLog {
+  level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
+  message: string;
+  context: LogContext;
+  error?: Error;
+}
+
+// ============================================================================
+// RATE LIMITING TYPES
+// ============================================================================
+
+export interface RateLimitConfig {
+  windowSizeMs: number;
+  maxRequests: number;
+  blockDurationMs: number;
+}
+
+export interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+  blocked: boolean;
+  blockUntil: number;
+}
+
+// ============================================================================
+// CIRCUIT BREAKER TYPES
+// ============================================================================
+
+export enum CircuitState {
+  CLOSED = 'CLOSED',
+  OPEN = 'OPEN',
+  HALF_OPEN = 'HALF_OPEN'
+}
+
+export interface CircuitBreakerConfig {
+  failureThreshold: number;
+  recoveryTimeMs: number;
+  monitoringPeriodMs: number;
+  expectedErrorRate: number;
+}
+
+export interface CircuitBreakerState {
+  state: CircuitState;
+  failureCount: number;
+  lastFailureTime: number;
+  nextAttemptTime: number;
+}
+
+// ============================================================================
+// VALIDATION TYPES
+// ============================================================================
+
+export interface ValidationRule {
+  field: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: RegExp;
+  validator?: (value: unknown) => boolean;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
 }

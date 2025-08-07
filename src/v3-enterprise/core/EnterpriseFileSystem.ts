@@ -11,7 +11,8 @@ import {
   SecurityConfig,
   PerformanceConfig,
   BackupConfig,
-  QuotaConfig
+  QuotaConfig,
+  ErrorCodes
 } from '../types';
 
 // Import enhanced types from V2
@@ -173,13 +174,27 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check authentication and permissions
       if (!await this.checkPermission(sessionToken, 'files', 'write')) {
-        return { success: false, error: 'Permission denied' };
+        return { 
+          success: false, 
+          error: {
+            code: ErrorCodes.PERMISSION_DENIED,
+            message: 'Permission denied',
+            timestamp: new Date()
+          }
+        };
       }
 
       // Get user session for quota checking
       const session = await this.authService.validateSession(sessionToken);
       if (!session) {
-        return { success: false, error: 'Invalid session' };
+        return { 
+          success: false, 
+          error: {
+            code: ErrorCodes.SESSION_EXPIRED,
+            message: 'Invalid session',
+            timestamp: new Date()
+          }
+        };
       }
 
       // Check quota before writing
@@ -192,7 +207,14 @@ export class EnterpriseFileSystem extends EventEmitter {
 
       if (!quotaCheck.allowed) {
         const violations = quotaCheck.violations.map(v => `${v.quotaType}: ${v.currentUsage}/${v.limit}`).join(', ');
-        return { success: false, error: `Quota exceeded: ${violations}` };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.QUOTA_EXCEEDED,
+            `Quota exceeded: ${violations}`,
+            { violations: quotaCheck.violations }
+          )
+        };
       }
 
       // Encrypt content before writing
@@ -237,13 +259,19 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check authentication and permissions
       if (!await this.checkPermission(sessionToken, 'files', 'read')) {
-        return { success: false, error: 'Permission denied' };
+        return { 
+          success: false, 
+          error: 'Permission denied'
+        };
       }
 
       // Get user session for quota checking
       const session = await this.authService.validateSession(sessionToken);
       if (!session) {
-        return { success: false, error: 'Invalid session' };
+        return { 
+          success: false, 
+          error: 'Invalid session'
+        };
       }
 
       // Read encrypted file using core file system with partial recovery options
@@ -261,7 +289,10 @@ export class EnterpriseFileSystem extends EventEmitter {
 
         if (!quotaCheck.allowed) {
           const violations = quotaCheck.violations.map(v => `${v.quotaType}: ${v.currentUsage}/${v.limit}`).join(', ');
-          return { success: false, error: `Bandwidth quota exceeded: ${violations}` };
+          return { 
+            success: false, 
+            error: `Bandwidth quota exceeded: ${violations}`
+          };
         }
 
         // Attempt decryption with corruption recovery
@@ -300,7 +331,13 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check authentication and permissions
       if (!await this.checkPermission(sessionToken, 'files', 'delete')) {
-        return { success: false, error: 'Permission denied' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.PERMISSION_DENIED,
+            'Permission denied'
+          )
+        };
       }
 
       return await this.fileSystemCore.deleteFile(fileId);
@@ -438,13 +475,25 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check authentication and permissions
       if (!await this.checkPermission(sessionToken, 'files', 'write')) {
-        return { success: false, error: 'Permission denied' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.PERMISSION_DENIED,
+            'Permission denied'
+          )
+        };
       }
 
       // Get user session for quota checking
       const session = await this.authService.validateSession(sessionToken);
       if (!session) {
-        return { success: false, error: 'Invalid session' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.SESSION_EXPIRED,
+            'Invalid session'
+          )
+        };
       }
 
       // Check quota (redundancy increases storage usage)
@@ -458,7 +507,14 @@ export class EnterpriseFileSystem extends EventEmitter {
 
       if (!quotaCheck.allowed) {
         const violations = quotaCheck.violations.map(v => `${v.quotaType}: ${v.currentUsage}/${v.limit}`).join(', ');
-        return { success: false, error: `Quota exceeded for high-redundancy storage: ${violations}` };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.QUOTA_EXCEEDED,
+            `Quota exceeded for high-redundancy storage: ${violations}`,
+            { violations: quotaCheck.violations }
+          )
+        };
       }
 
       // Encrypt content before writing
@@ -534,7 +590,13 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check admin permissions
       if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
-        return { success: false, error: 'Admin permission required for data tiering' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.PERMISSION_DENIED,
+            'Admin permission required for data tiering'
+          )
+        };
       }
 
       await this.fileSystemCore.performDataTiering();
@@ -568,7 +630,13 @@ export class EnterpriseFileSystem extends EventEmitter {
       try {
         // Check permissions
         if (!await this.checkPermission(sessionToken, 'files', 'search')) {
-          resolve({ success: false, error: 'Search permission denied' });
+          resolve({ 
+            success: false, 
+            error: this.createFileSystemError(
+              ErrorCodes.PERMISSION_DENIED,
+              'Search permission denied'
+            )
+          });
           return;
         }
 
@@ -577,7 +645,13 @@ export class EnterpriseFileSystem extends EventEmitter {
         // Filter based on user permissions (only return files user can access)
         const session = await this.authService.validateSession(sessionToken);
         if (!session) {
-          resolve({ success: false, error: 'Invalid session' });
+          resolve({ 
+            success: false, 
+            error: this.createFileSystemError(
+              ErrorCodes.SESSION_EXPIRED,
+              'Invalid session'
+            )
+          });
           return;
         }
 
@@ -604,7 +678,13 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check admin permissions
       if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
-        return { success: false, error: 'Admin permission required for defragmentation' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.PERMISSION_DENIED,
+            'Admin permission required for defragmentation'
+          )
+        };
       }
 
       const result = await this.fileSystemCore.performDefragmentation();
@@ -634,7 +714,13 @@ export class EnterpriseFileSystem extends EventEmitter {
     try {
       // Check admin permissions
       if (!await this.checkPermission(sessionToken, 'admin', 'manage')) {
-        return { success: false, error: 'Admin permission required for integrity verification' };
+        return { 
+          success: false, 
+          error: this.createFileSystemError(
+            ErrorCodes.PERMISSION_DENIED,
+            'Admin permission required for integrity verification'
+          )
+        };
       }
 
       Logger.info('[ENTERPRISE] Starting comprehensive data integrity verification...');
@@ -707,6 +793,23 @@ export class EnterpriseFileSystem extends EventEmitter {
       caching: this.cacheService.getStats(),
       recommendations: this.getOptimizationRecommendations(),
       uptime: this.getSystemUptime()
+    };
+  }
+
+  // ============================================================================
+  // UTILITY METHODS
+  // ============================================================================
+
+  private createFileSystemError(
+    code: ErrorCodes, 
+    message: string, 
+    context?: Record<string, unknown>
+  ): import('../types').FileSystemError {
+    return {
+      code,
+      message,
+      context,
+      timestamp: new Date()
     };
   }
 

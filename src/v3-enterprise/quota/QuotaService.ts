@@ -289,7 +289,7 @@ export class QuotaService extends EventEmitter {
   // Cleanup expired bandwidth tracking
   cleanupExpiredTracking(): void {
     const now = Date.now();
-    for (const [key, tracking] of this.bandwidthTracking.entries()) {
+    for (const [key, tracking] of Array.from(this.bandwidthTracking.entries())) {
       if (now >= tracking.resetTime) {
         this.bandwidthTracking.delete(key);
       }
@@ -337,7 +337,7 @@ export class QuotaService extends EventEmitter {
     let totalBandwidthUsed = 0;
     let violationsToday = 0;
 
-    for (const usage of this.usage.values()) {
+    for (const usage of Array.from(this.usage.values())) {
       totalStorageUsed += usage.storageUsed;
       totalFiles += usage.fileCount;
       totalBandwidthUsed += usage.bandwidthUsed;

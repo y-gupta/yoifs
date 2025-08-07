@@ -30,6 +30,7 @@ class SimpleVersionTest {
     
     const disk = new MemoryDisk(1024 * 1024); // 1MB fresh disk
     let fs: any;
+    let sessionToken: string | undefined;
 
     // Initialize file system
     switch (this.version) {
@@ -41,6 +42,17 @@ class SimpleVersionTest {
         break;
       case 'v3':
         fs = createEnterpriseFileSystem(disk);
+        // Authenticate once for V3
+        const authResult = await fs.authenticateUser({
+          username: 'admin',
+          password: 'admin123'
+        });
+        if (authResult.success && authResult.sessionToken) {
+          sessionToken = authResult.sessionToken;
+        } else {
+          Logger.error(`❌ V3 authentication failed: ${JSON.stringify(authResult.error)}`);
+          return;
+        }
         break;
     }
 
@@ -50,11 +62,7 @@ class SimpleVersionTest {
       let writeResult: any;
 
       if (this.version === 'v3') {
-        const authResult = await fs.authenticateUser({
-          username: 'admin',
-          password: 'admin123'
-        });
-        writeResult = await fs.writeFile(authResult.sessionToken!, 'test.txt', content, 'admin');
+        writeResult = await fs.writeFile(sessionToken!, 'test.txt', content, 'admin');
       } else {
         writeResult = await fs.writeFile('test.txt', content);
       }
@@ -62,18 +70,14 @@ class SimpleVersionTest {
       if (writeResult.success) {
         Logger.success(`✅ ${this.version.toUpperCase()} write successful`);
       } else {
-        Logger.error(`❌ ${this.version.toUpperCase()} write failed: ${writeResult.error}`);
+        Logger.error(`❌ ${this.version.toUpperCase()} write failed: ${JSON.stringify(writeResult.error)}`);
         return;
       }
 
       // Read the file
       let readResult: any;
       if (this.version === 'v3') {
-        const authResult = await fs.authenticateUser({
-          username: 'admin',
-          password: 'admin123'
-        });
-        readResult = await fs.readFile(authResult.sessionToken!, writeResult.data!);
+        readResult = await fs.readFile(sessionToken!, writeResult.data!);
       } else {
         readResult = await fs.readFile('test.txt');
       }
@@ -81,7 +85,7 @@ class SimpleVersionTest {
       if (readResult.success && Buffer.compare(content, readResult.data!) === 0) {
         Logger.success(`✅ ${this.version.toUpperCase()} read successful - content matches`);
       } else {
-        Logger.error(`❌ ${this.version.toUpperCase()} read failed: ${readResult.error}`);
+        Logger.error(`❌ ${this.version.toUpperCase()} read failed: ${JSON.stringify(readResult.error)}`);
       }
 
     } catch (error) {
@@ -94,6 +98,7 @@ class SimpleVersionTest {
     
     const disk = new MemoryDisk(1024 * 1024); // 1MB fresh disk
     let fs: any;
+    let sessionToken: string | undefined;
 
     // Initialize file system
     switch (this.version) {
@@ -105,6 +110,17 @@ class SimpleVersionTest {
         break;
       case 'v3':
         fs = createEnterpriseFileSystem(disk);
+        // Authenticate once for V3
+        const authResult = await fs.authenticateUser({
+          username: 'admin',
+          password: 'admin123'
+        });
+        if (authResult.success && authResult.sessionToken) {
+          sessionToken = authResult.sessionToken;
+        } else {
+          Logger.error(`❌ V3 authentication failed: ${JSON.stringify(authResult.error)}`);
+          return;
+        }
         break;
     }
 
@@ -117,11 +133,7 @@ class SimpleVersionTest {
       for (const file of testFiles) {
         try {
           if (this.version === 'v3') {
-            const authResult = await fs.authenticateUser({
-              username: 'admin',
-              password: 'admin123'
-            });
-            const result = await fs.writeFile(authResult.sessionToken!, file.name, file.content, 'admin');
+            const result = await fs.writeFile(sessionToken!, file.name, file.content, 'admin');
             if (result.success) {
               writeSuccessCount++;
               fileMap[file.name] = result.data!; // Store fileId for V3
@@ -148,13 +160,9 @@ class SimpleVersionTest {
       for (const file of testFiles) {
         try {
           if (this.version === 'v3') {
-            const authResult = await fs.authenticateUser({
-              username: 'admin',
-              password: 'admin123'
-            });
             const fileId = fileMap[file.name]; // Use stored fileId for V3
             if (fileId) {
-              const result = await fs.readFile(authResult.sessionToken!, fileId, {
+              const result = await fs.readFile(sessionToken!, fileId, {
                 allowPartialRecovery: true,
                 fillCorruptedChunks: 'zeros',
                 minimumRecoveryRate: 30

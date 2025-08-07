@@ -254,7 +254,7 @@ export class EncryptionService extends EventEmitter {
     const now = new Date();
     const expiredKeys: string[] = [];
 
-    for (const [keyId, key] of this.keys.entries()) {
+    for (const [keyId, key] of Array.from(this.keys.entries())) {
       if (now > key.expiresAt) {
         expiredKeys.push(keyId);
       }
@@ -304,7 +304,7 @@ export class EncryptionService extends EventEmitter {
     let activeKeys = 0;
     let expiredKeys = 0;
 
-    for (const key of this.keys.values()) {
+    for (const key of Array.from(this.keys.values())) {
       if (key.isActive) {
         activeKeys++;
       }

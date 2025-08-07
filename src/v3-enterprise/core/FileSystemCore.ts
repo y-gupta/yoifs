@@ -78,7 +78,7 @@ export class FileSystemCore {
     let detectedCorruptions = 0;
     let repairedCorruptions = 0;
     
-    for (const [chunkId, chunkMeta] of this.chunks.entries()) {
+    for (const [chunkId, chunkMeta] of Array.from(this.chunks.entries())) {
       scannedChunks++;
       
       const healthResult = await this.checkChunkHealth(chunkId, chunkMeta);
@@ -288,7 +288,14 @@ export class FileSystemCore {
 
     // All copies are corrupted
     this.corruptionReport.unrecoverableCorruptions++;
-    return { success: false, error: 'All replicas corrupted - data unrecoverable' };
+    return { 
+      success: false, 
+      error: {
+        code: 'CORRUPTION_UNRECOVERABLE' as any,
+        message: 'All replicas corrupted - data unrecoverable',
+        timestamp: new Date()
+      }
+    };
   }
 
   private async repairCorruptedReplicas(
@@ -549,7 +556,14 @@ export class FileSystemCore {
   private async deleteFileInternal(fileId: string): Promise<FileSystemResult<void>> {
     const fileMeta = this.files.get(fileId);
     if (!fileMeta) {
-      return { success: false, error: 'File not found' };
+      return { 
+        success: false, 
+        error: {
+          code: 'FILE_NOT_FOUND' as any,
+          message: 'File not found',
+          timestamp: new Date()
+        }
+      };
     }
 
     // Decrement reference counts for chunks
@@ -644,7 +658,14 @@ export class FileSystemCore {
       const decompressed = await this.decompress(replica, chunkMeta.originalSize);
       return { success: true, data: decompressed };
     } else {
-      return { success: false, error: 'Both primary and replica corrupted' };
+      return { 
+        success: false, 
+        error: {
+          code: 'DATA_CORRUPTED' as any,
+          message: 'Both primary and replica corrupted',
+          timestamp: new Date()
+        }
+      };
     }
   }
 
@@ -720,7 +741,7 @@ export class FileSystemCore {
 
   getTotalFileSize(): number {
     let totalSize = 0;
-    for (const file of this.files.values()) {
+    for (const file of Array.from(this.files.values())) {
       totalSize += file.size;
     }
     return totalSize;
@@ -730,7 +751,7 @@ export class FileSystemCore {
     let totalOriginal = 0;
     let totalCompressed = 0;
     
-    for (const chunk of this.chunks.values()) {
+    for (const chunk of Array.from(this.chunks.values())) {
       totalOriginal += chunk.originalSize * chunk.references;
       totalCompressed += chunk.compressedData.length * chunk.references;
     }
@@ -789,7 +810,7 @@ export class FileSystemCore {
     
     let tierChanges = 0;
     
-    for (const [fileId, fileMeta] of this.files.entries()) {
+    for (const [fileId, fileMeta] of Array.from(this.files.entries())) {
       const timeSinceLastAccess = now.getTime() - fileMeta.lastAccessed.getTime();
       let newTier: 'HOT' | 'WARM' | 'COLD' = 'COLD';
       
@@ -813,8 +834,9 @@ export class FileSystemCore {
   getFilesByTier(): { HOT: number; WARM: number; COLD: number } {
     const tiers = { HOT: 0, WARM: 0, COLD: 0 };
     
-    for (const fileMeta of this.files.values()) {
-      tiers[fileMeta.tier]++;
+    for (const fileMeta of Array.from(this.files.values())) {
+      const tier = fileMeta.tier as keyof typeof tiers;
+      tiers[tier]++;
     }
     
     return tiers;
@@ -833,7 +855,7 @@ export class FileSystemCore {
   }): FileMeta[] {
     const results: FileMeta[] = [];
     
-    for (const fileMeta of this.files.values()) {
+    for (const fileMeta of Array.from(this.files.values())) {
       let matches = true;
       
       if (criteria.namePattern && !fileMeta.name.includes(criteria.namePattern)) {
@@ -927,7 +949,7 @@ export class FileSystemCore {
     let corruptedChunks = 0;
     
     // Verify all files
-    for (const [fileId, fileMeta] of this.files.entries()) {
+    for (const [fileId, fileMeta] of Array.from(this.files.entries())) {
       let fileCorrupted = false;
       
       for (const chunkRef of fileMeta.chunkRefs) {
@@ -979,7 +1001,7 @@ export class FileSystemCore {
     let deduplicationSavings = 0;
     
     // Analyze compression effectiveness
-    for (const chunk of this.chunks.values()) {
+    for (const chunk of Array.from(this.chunks.values())) {
       const originalSize = chunk.originalSize * chunk.references;
       const compressedSize = chunk.compressedData.length * chunk.references;
       compressionSavings += originalSize - compressedSize;

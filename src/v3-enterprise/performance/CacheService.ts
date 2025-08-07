@@ -61,7 +61,7 @@ export class CacheService extends EventEmitter {
   async invalidate(pattern: string): Promise<void> {
     const keysToDelete: string[] = [];
     
-    for (const key of this.cache.keys()) {
+    for (const key of Array.from(this.cache.keys())) {
       if (key.includes(pattern)) {
         keysToDelete.push(key);
       }
@@ -100,7 +100,7 @@ export class CacheService extends EventEmitter {
     let oldestEntry: CacheEntry | null = null;
     let oldestKey: string | null = null;
 
-    for (const [key, entry] of this.cache.entries()) {
+    for (const [key, entry] of Array.from(this.cache.entries())) {
       if (!oldestEntry || entry.lastAccessed < oldestEntry.lastAccessed) {
         oldestEntry = entry;
         oldestKey = key;
@@ -119,7 +119,7 @@ export class CacheService extends EventEmitter {
     let leastFrequentEntry: CacheEntry | null = null;
     let leastFrequentKey: string | null = null;
 
-    for (const [key, entry] of this.cache.entries()) {
+    for (const [key, entry] of Array.from(this.cache.entries())) {
       if (!leastFrequentEntry || entry.accessCount < leastFrequentEntry.accessCount) {
         leastFrequentEntry = entry;
         leastFrequentKey = key;
@@ -161,7 +161,7 @@ export class CacheService extends EventEmitter {
 
   private getTotalAccess(): number {
     let total = 0;
-    for (const entry of this.cache.values()) {
+    for (const entry of Array.from(this.cache.values())) {
       total += entry.accessCount;
     }
     return total;
@@ -169,7 +169,7 @@ export class CacheService extends EventEmitter {
 
   private getHitCount(): number {
     let hits = 0;
-    for (const entry of this.cache.values()) {
+    for (const entry of Array.from(this.cache.values())) {
       hits += entry.accessCount;
     }
     return hits;
