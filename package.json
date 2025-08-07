@@ -13,6 +13,8 @@
     "test": "jest",
     "test:unit": "jest tests/",
     "test:integration": "jest tests/EnterpriseWorkflows.test.ts",
+    "test:enterprise": "jest tests/EnterpriseFileSystem.test.ts tests/EnterpriseWorkflows.test.ts",
+    "test:performance": "jest tests/EnterpriseWorkflows.test.ts --testNamePattern='Performance'",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "lint": "tsc --noEmit --strict",
