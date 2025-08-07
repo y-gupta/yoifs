@@ -1,0 +1,301 @@
+{
+  "title": "YOIFS API Reference",
+  "version": "3.0.0",
+  "description": "Complete API documentation for all YOIFS versions",
+  
+  "versions": {
+    "v1-basic": {
+      "description": "Basic filesystem with corruption recovery",
+      "classes": {
+        "FileSystem": {
+          "constructor": {
+            "params": [{"name": "disk", "type": "Disk", "required": true}]
+          },
+          "methods": {
+            "writeFile": {
+              "description": "Write file with corruption detection",
+              "params": [
+                {"name": "filename", "type": "string", "required": true},
+                {"name": "data", "type": "Buffer", "required": true}
+              ],
+              "returns": "Promise<FileSystemResult<string>>",
+              "example": "await fs.writeFile('test.txt', Buffer.from('hello'))"
+            },
+            "readFile": {
+              "description": "Read file with corruption recovery",
+              "params": [
+                {"name": "filename", "type": "string", "required": true},
+                {"name": "options", "type": "ReadOptions", "required": false}
+              ],
+              "returns": "Promise<FileSystemResult<Buffer>>",
+              "example": "await fs.readFile('test.txt')"
+            },
+            "deleteFile": {
+              "description": "Delete file from filesystem",
+              "params": [{"name": "filename", "type": "string", "required": true}],
+              "returns": "Promise<FileSystemResult<boolean>>",
+              "example": "await fs.deleteFile('test.txt')"
+            },
+            "listFiles": {
+              "description": "List all files in filesystem",
+              "params": [],
+              "returns": "Promise<FileSystemResult<string[]>>",
+              "example": "await fs.listFiles()"
+            }
+          }
+        },
+        "MemoryDisk": {
+          "constructor": {
+            "params": [{"name": "size", "type": "number", "required": true}]
+          },
+          "methods": {
+            "read": {
+              "params": [
+                {"name": "offset", "type": "number", "required": true},
+                {"name": "length", "type": "number", "required": true}
+              ],
+              "returns": "Promise<Buffer>"
+            },
+            "write": {
+              "params": [
+                {"name": "offset", "type": "number", "required": true},
+                {"name": "data", "type": "Buffer", "required": true}
+              ],
+              "returns": "Promise<void>"
+            },
+            "size": {
+              "returns": "number"
+            }
+          }
+        }
+      }
+    },
+
+    "v2-enhanced": {
+      "description": "Enhanced with redundancy and caching",
+      "extends": "v1-basic",
+      "additional_methods": {
+        "writeFileWithRedundancy": {
+          "description": "Write file with configurable redundancy",
+          "params": [
+            {"name": "filename", "type": "string", "required": true},
+            {"name": "data", "type": "Buffer", "required": true},
+            {"name": "redundancyLevel", "type": "number", "required": false, "default": 3}
+          ],
+          "returns": "Promise<FileSystemResult<string>>",
+          "example": "await fs.writeFileWithRedundancy('critical.txt', data, 5)"
+        },
+        "getPerformanceMetrics": {
+          "description": "Get filesystem performance metrics",
+          "returns": "PerformanceMetrics",
+          "example": "const metrics = fs.getPerformanceMetrics()"
+        },
+        "getCacheStats": {
+          "description": "Get cache statistics",
+          "returns": "CacheStats",
+          "example": "const stats = fs.getCacheStats()"
+        }
+      }
+    },
+
+    "v3-enterprise": {
+      "description": "Full enterprise features with security and compliance",
+      "extends": "v2-enhanced",
+      "classes": {
+        "EnterpriseFileSystem": {
+          "constructor": {
+            "params": [
+              {"name": "disk", "type": "Disk", "required": true},
+              {"name": "config", "type": "EnterpriseConfig", "required": true}
+            ]
+          },
+          "security_methods": {
+            "authenticateUser": {
+              "description": "Authenticate user and create session",
+              "params": [{"name": "credentials", "type": "UserCredentials", "required": true}],
+              "returns": "Promise<AuthResult>",
+              "example": "await fs.authenticateUser({username: 'admin', password: 'pass'})"
+            },
+            "createUser": {
+              "description": "Create new user with roles",
+              "params": [
+                {"name": "username", "type": "string", "required": true},
+                {"name": "password", "type": "string", "required": true},
+                {"name": "roles", "type": "string[]", "required": true}
+              ],
+              "returns": "Promise<FileSystemResult<string>>",
+              "example": "await fs.createUser('john', 'pass123', ['USER'])"
+            },
+            "checkPermission": {
+              "description": "Check user permissions for resource and action",
+              "params": [
+                {"name": "sessionToken", "type": "string", "required": true},
+                {"name": "resource", "type": "string", "required": true},
+                {"name": "action", "type": "string", "required": true}
+              ],
+              "returns": "Promise<boolean>",
+              "example": "await fs.checkPermission(token, 'files', 'write')"
+            }
+          },
+          "file_methods": {
+            "writeFile": {
+              "description": "Write file with authentication and encryption",
+              "params": [
+                {"name": "sessionToken", "type": "string", "required": true},
+                {"name": "filename", "type": "string", "required": true},
+                {"name": "data", "type": "Buffer", "required": true},
+                {"name": "owner", "type": "string", "required": true}
+              ],
+              "returns": "Promise<FileSystemResult<string>>",
+              "example": "await fs.writeFile(token, 'file.txt', data, 'admin')"
+            },
+            "readFile": {
+              "description": "Read file with authentication and decryption",
+              "params": [
+                {"name": "sessionToken", "type": "string", "required": true},
+                {"name": "fileId", "type": "string", "required": true},
+                {"name": "options", "type": "ReadOptions", "required": false}
+              ],
+              "returns": "Promise<FileSystemResult<Buffer>>",
+              "example": "await fs.readFile(token, fileId)"
+            },
+            "searchFiles": {
+              "description": "Search files with various criteria",
+              "params": [
+                {"name": "sessionToken", "type": "string", "required": true},
+                {"name": "criteria", "type": "SearchCriteria", "required": true}
+              ],
+              "returns": "Promise<FileSystemResult<FileMeta[]>>",
+              "example": "await fs.searchFiles(token, {owner: 'admin', namePattern: '*.txt'})"
+            }
+          },
+          "management_methods": {
+            "setUserQuota": {
+              "description": "Set storage quota for user",
+              "params": [
+                {"name": "userId", "type": "string", "required": true},
+                {"name": "quota", "type": "Quota", "required": true}
+              ],
+              "returns": "void",
+              "example": "fs.setUserQuota('john', {storageLimit: 1000000, fileCountLimit: 100})"
+            },
+            "getUserUsage": {
+              "description": "Get current usage for user",
+              "params": [{"name": "userId", "type": "string", "required": true}],
+              "returns": "QuotaUsage",
+              "example": "const usage = fs.getUserUsage('john')"
+            },
+            "performDefragmentation": {
+              "description": "Defragment filesystem storage",
+              "params": [{"name": "sessionToken", "type": "string", "required": true}],
+              "returns": "Promise<FileSystemResult<DefragResult>>",
+              "example": "await fs.performDefragmentation(adminToken)"
+            },
+            "verifyDataIntegrity": {
+              "description": "Verify integrity of all files",
+              "params": [{"name": "sessionToken", "type": "string", "required": true}],
+              "returns": "Promise<FileSystemResult<IntegrityReport>>",
+              "example": "await fs.verifyDataIntegrity(adminToken)"
+            }
+          },
+          "monitoring_methods": {
+            "getPerformanceMetrics": {
+              "description": "Get detailed performance metrics",
+              "returns": "PerformanceMetrics",
+              "example": "const metrics = fs.getPerformanceMetrics()"
+            },
+            "getSystemHealthReport": {
+              "description": "Get comprehensive system health report",
+              "returns": "HealthReport",
+              "example": "const health = fs.getSystemHealthReport()"
+            },
+            "getSecurityEvents": {
+              "description": "Get recent security events",
+              "params": [{"name": "limit", "type": "number", "required": false, "default": 100}],
+              "returns": "SecurityEvent[]",
+              "example": "const events = fs.getSecurityEvents(50)"
+            },
+            "getOptimizationRecommendations": {
+              "description": "Get system optimization recommendations",
+              "returns": "OptimizationRecommendations",
+              "example": "const recs = fs.getOptimizationRecommendations()"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "types": {
+    "FileSystemResult": {
+      "description": "Standard result wrapper for all operations",
+      "properties": {
+        "success": {"type": "boolean", "description": "Operation success status"},
+        "data": {"type": "T", "optional": true, "description": "Result data if successful"},
+        "error": {"type": "FileSystemError", "optional": true, "description": "Error details if failed"}
+      }
+    },
+    "UserCredentials": {
+      "properties": {
+        "username": {"type": "string", "required": true},
+        "password": {"type": "string", "required": true},
+        "mfaToken": {"type": "string", "optional": true}
+      }
+    },
+    "AuthResult": {
+      "properties": {
+        "success": {"type": "boolean", "required": true},
+        "sessionToken": {"type": "string", "optional": true},
+        "userId": {"type": "string", "optional": true},
+        "roles": {"type": "string[]", "optional": true},
+        "error": {"type": "string", "optional": true}
+      }
+    },
+    "Quota": {
+      "properties": {
+        "storageLimit": {"type": "number", "description": "Storage limit in bytes"},
+        "fileCountLimit": {"type": "number", "description": "Maximum number of files"},
+        "bandwidthLimit": {"type": "number", "description": "Bandwidth limit per day"},
+        "retentionPeriod": {"type": "number", "description": "Retention period in days"}
+      }
+    },
+    "SearchCriteria": {
+      "properties": {
+        "namePattern": {"type": "string", "optional": true, "description": "File name pattern"},
+        "owner": {"type": "string", "optional": true, "description": "File owner"},
+        "minSize": {"type": "number", "optional": true, "description": "Minimum file size"},
+        "maxSize": {"type": "number", "optional": true, "description": "Maximum file size"},
+        "createdAfter": {"type": "Date", "optional": true, "description": "Created after date"},
+        "createdBefore": {"type": "Date", "optional": true, "description": "Created before date"}
+      }
+    }
+  },
+
+  "error_codes": {
+    "PERMISSION_DENIED": "User lacks required permissions",
+    "FILE_NOT_FOUND": "Requested file does not exist",
+    "QUOTA_EXCEEDED": "User has exceeded storage quota",
+    "ENCRYPTION_FAILED": "File encryption/decryption failed",
+    "AUTHENTICATION_FAILED": "User authentication failed",
+    "SESSION_EXPIRED": "User session has expired",
+    "CORRUPTION_DETECTED": "Data corruption detected",
+    "INVALID_INPUT": "Invalid input parameters",
+    "SYSTEM_ERROR": "Internal system error",
+    "RATE_LIMITED": "Request rate limit exceeded"
+  },
+
+  "examples": {
+    "basic_usage": {
+      "description": "Basic filesystem operations",
+      "code": "const fs = new FileSystem(new MemoryDisk(1024*1024));\nconst result = await fs.writeFile('test.txt', Buffer.from('Hello'));\nif (result.success) {\n  const content = await fs.readFile('test.txt');\n  console.log(content.data?.toString());\n}"
+    },
+    "enterprise_usage": {
+      "description": "Enterprise filesystem with authentication",
+      "code": "const fs = new EnterpriseFileSystem(disk, config);\nconst auth = await fs.authenticateUser({username: 'admin', password: 'pass'});\nif (auth.success) {\n  await fs.writeFile(auth.sessionToken, 'secure.txt', data, 'admin');\n}"
+    },
+    "redundancy_example": {
+      "description": "High redundancy file storage",
+      "code": "await fs.writeFileWithRedundancy(token, 'critical.txt', data, 'admin', 7);"
+    }
+  }
+}

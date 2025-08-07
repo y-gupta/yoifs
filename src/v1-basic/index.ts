@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { FileSystem } from './solution';
+import { FileSystem } from './version1-basic-solution';
 
 // Disk abstraction interface
 interface Disk {
