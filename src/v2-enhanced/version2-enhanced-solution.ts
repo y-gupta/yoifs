@@ -13,6 +13,26 @@ interface FileSystemResult<T> {
   error?: string;
 }
 
+// New interfaces for partial corruption recovery
+export interface ReadOptions {
+  allowPartialRecovery?: boolean;
+  fillCorruptedChunks?: 'zeros' | 'pattern' | 'skip';
+  minimumRecoveryRate?: number;
+}
+
+export interface CorruptionReport {
+  totalChunks: number;
+  corruptedChunks: number;
+  recoveredChunks: number;
+  recoveryRate: number;
+  corruptedChunkRefs: string[];
+  partialDataAvailable: boolean;
+}
+
+export interface PartialFileResult extends FileSystemResult<Buffer> {
+  corruptionReport?: CorruptionReport;
+}
+
 interface FileMeta {
   name: string;
   size: number;
@@ -126,57 +146,36 @@ export class EnhancedFileSystem {
     if (this.metadataLoaded && !this.metadataCorrupted) return;
 
     try {
-      // Try to load primary metadata first
-      const primaryData = await this.disk.read(this.metadataOffset, this.sectionSize);
-      const primarySection = this.parseMetadataSection(primaryData);
-      
-      if (primarySection && this.validateMetadataSection(primarySection)) {
-        this.metadata.primary = primarySection;
-        this.metadataCorrupted = false;
-        Logger.info(`[YOIFS] Primary metadata loaded (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
+      const raw = await this.disk.read(this.metadataOffset, this.metadataSize);
+      const sections: MetadataSection[] = [];
+
+      // Parse all metadata sections
+      for (let i = 0; i < this.metadataSections; i++) {
+        const sectionStart = i * this.sectionSize;
+        const sectionData = raw.subarray(sectionStart, sectionStart + this.sectionSize);
+        const section = this.parseMetadataSection(sectionData);
+        if (section && this.validateMetadataSection(section)) {
+          sections.push(section);
+        }
+      }
+
+      if (sections.length === 0) {
+        Logger.error('[YOIFS] No valid metadata sections found!');
+        this.metadataCorrupted = true;
+        this.metadata.primary = this.createEmptyMetadataSection();
+        this.metadata.backups = [];
       } else {
-        // Check if this is an empty disk (all zeros)
-        const isEmpty = primaryData.every((byte: number) => byte === 0);
-        if (isEmpty) {
-          Logger.info('[YOIFS] Empty disk detected, initializing fresh metadata.');
-          this.metadata.primary = this.createEmptyMetadataSection();
-          this.metadataCorrupted = false;
-          // Save initial metadata
-          await this.saveMetadata();
-        } else {
-          throw new Error('Primary metadata invalid');
-        }
+        // Use the most recent valid section as primary
+        sections.sort((a, b) => (b.modifiedAt || 0) - (a.modifiedAt || 0));
+        this.metadata.primary = sections[0];
+        this.metadata.backups = sections.slice(1);
+        this.metadataCorrupted = false;
+        Logger.info(`[YOIFS] Metadata loaded (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
       }
-
-      // Load backup metadata sections
-      this.metadata.backups = [];
-      for (let i = 1; i < this.metadataSections; i++) {
-        try {
-          const backupOffset = this.metadataOffset + (i * this.sectionSize);
-          const backupData = await this.disk.read(backupOffset, this.sectionSize);
-          const backupSection = this.parseMetadataSection(backupData);
-          
-          if (backupSection && this.validateMetadataSection(backupSection)) {
-            this.metadata.backups.push(backupSection);
-          }
-        } catch (error) {
-          Logger.warning(`[YOIFS] Backup metadata section ${i} corrupted or missing`);
-        }
-      }
-
-      // If primary is corrupted, try to recover from backup
-      if (this.metadataCorrupted && this.metadata.backups.length > 0) {
-        const bestBackup = this.findBestBackup();
-        if (bestBackup) {
-          this.metadata.primary = bestBackup;
-          this.metadataCorrupted = false;
-          Logger.info('[YOIFS] Recovered metadata from backup');
-        }
-      }
-
     } catch (error) {
       Logger.error('[YOIFS] Could not load metadata! Disk might be empty or corrupted.');
       this.metadata.primary = this.createEmptyMetadataSection();
+      this.metadata.backups = [];
       this.metadataCorrupted = true;
     }
 
@@ -187,110 +186,102 @@ export class EnhancedFileSystem {
     try {
       const json = data.toString().replace(/\0+$/, '');
       if (!json.trim()) return null;
-      
+
       const parsed = JSON.parse(json);
-      
-      // Reconstruct Map from serialized data
-      const chunks = new Map<string, FileChunk>();
-      if (parsed.chunks) {
-        for (const [key, value] of Object.entries(parsed.chunks)) {
-          chunks.set(key, value as FileChunk);
-        }
-      }
-      
       return {
         version: parsed.version || 1,
         files: parsed.files || [],
-        chunks,
+        chunks: new Map(Object.entries(parsed.chunks || {})),
         freeSpace: parsed.freeSpace || [],
-        checksum: parsed.checksum || ''
+        checksum: parsed.checksum || '',
+        modifiedAt: parsed.modifiedAt
       };
     } catch (error) {
+      Logger.warning(`[YOIFS] Failed to parse metadata section: ${error}`);
       return null;
     }
   }
 
   private validateMetadataSection(section: MetadataSection): boolean {
-    try {
-      const dataToCheck = {
-        version: section.version,
+    if (!section.files || !section.chunks || !section.freeSpace) {
+      return false;
+    }
+
+    // Validate checksum if present
+    if (section.checksum) {
+      const calculatedChecksum = this.calculateChecksum(Buffer.from(JSON.stringify({
         files: section.files,
         chunks: Object.fromEntries(section.chunks),
         freeSpace: section.freeSpace
-      };
-      const expectedChecksum = this.calculateChecksum(Buffer.from(JSON.stringify(dataToCheck)));
-      return expectedChecksum === section.checksum;
-    } catch (error) {
-      return false;
+      })));
+      return calculatedChecksum === section.checksum;
     }
+
+    return true;
   }
 
   private findBestBackup(): MetadataSection | null {
     if (this.metadata.backups.length === 0) return null;
     
-    // Find backup with highest version number
-    return this.metadata.backups.reduce((best, current) => 
-      current.version > best.version ? current : best
-    );
+    // Find the most recent valid backup
+    return this.metadata.backups
+      .filter(section => this.validateMetadataSection(section))
+      .sort((a, b) => (b.modifiedAt || 0) - (a.modifiedAt || 0))[0] || null;
   }
 
   private async saveMetadata(): Promise<void> {
-    // Update version and calculate checksum
-    this.metadata.primary.version++;
+    if (this.metadataCorrupted) {
+      Logger.error('[YOIFS] Cannot save metadata: metadata is corrupted!');
+      throw new Error('Metadata corrupted');
+    }
+
+    // Update modification time
     this.metadata.primary.modifiedAt = Date.now();
-    
-    const dataToCheck = {
-      version: this.metadata.primary.version,
+
+    // Calculate checksum
+    const metadataString = JSON.stringify({
       files: this.metadata.primary.files,
       chunks: Object.fromEntries(this.metadata.primary.chunks),
       freeSpace: this.metadata.primary.freeSpace
-    };
-    
-    this.metadata.primary.checksum = this.calculateChecksum(Buffer.from(JSON.stringify(dataToCheck)));
+    });
+    this.metadata.primary.checksum = this.calculateChecksum(Buffer.from(metadataString));
 
-    // Serialize metadata
-    const json = JSON.stringify(this.metadata.primary);
-    const metadataBuffer = Buffer.alloc(this.sectionSize, 0);
-    metadataBuffer.write(json);
-
-    // Write to all sections (primary + backups)
-    const writePromises: Promise<void>[] = [];
-    for (let i = 0; i < this.metadataSections; i++) {
-      const offset = this.metadataOffset + (i * this.sectionSize);
-      writePromises.push(this.disk.write(offset, metadataBuffer));
+    // Create backup sections
+    const backupSections = [this.metadata.primary];
+    for (let i = 1; i < this.metadataSections; i++) {
+      backupSections.push({ ...this.metadata.primary });
     }
 
-    await Promise.all(writePromises);
-    Logger.info(`[YOIFS] Metadata saved (version ${this.metadata.primary.version})`);
+    // Write all sections
+    const buf = Buffer.alloc(this.metadataSize, 0);
+    for (let i = 0; i < backupSections.length; i++) {
+      const sectionData = Buffer.from(JSON.stringify(backupSections[i]));
+      const sectionStart = i * this.sectionSize;
+      sectionData.copy(buf, sectionStart, 0, Math.min(sectionData.length, this.sectionSize));
+    }
+
+    await this.disk.write(this.metadataOffset, buf);
+    Logger.info(`[YOIFS] Metadata saved (${this.metadata.primary.files.length} files, ${this.metadata.primary.chunks.size} chunks).`);
   }
 
   private getNextOffset(): number {
     let maxEnd = this.metadataOffset + this.metadataSize;
-    
-    // Check file chunks
     for (const chunk of this.metadata.primary.chunks.values()) {
       maxEnd = Math.max(maxEnd, chunk.offset + chunk.compressedData.length, chunk.replicaOffset + chunk.compressedData.length);
     }
-    
-    // Check free space entries
-    for (const freeSpace of this.metadata.primary.freeSpace) {
-      maxEnd = Math.max(maxEnd, freeSpace.offset + freeSpace.size);
-    }
-    
     return Math.ceil(maxEnd / this.blockSize) * this.blockSize;
   }
 
   private findFreeSpace(size: number): number | null {
     // Simple first-fit algorithm
-    for (const freeSpace of this.metadata.primary.freeSpace) {
-      if (freeSpace.size >= size) {
-        const offset = freeSpace.offset;
-        freeSpace.offset += size;
-        freeSpace.size -= size;
+    for (let i = 0; i < this.metadata.primary.freeSpace.length; i++) {
+      if (this.metadata.primary.freeSpace[i].size >= size) {
+        const offset = this.metadata.primary.freeSpace[i].offset;
+        this.metadata.primary.freeSpace[i].offset += size;
+        this.metadata.primary.freeSpace[i].size -= size;
         
-        // Remove if completely used
-        if (freeSpace.size === 0) {
-          this.metadata.primary.freeSpace = this.metadata.primary.freeSpace.filter(fs => fs.size > 0);
+        if (this.metadata.primary.freeSpace[i].size === 0) {
+          this.metadata.primary.freeSpace.splice(i, 1);
         }
         
         return offset;
@@ -301,7 +292,7 @@ export class EnhancedFileSystem {
 
   private markFreeSpace(offset: number, size: number): void {
     // Merge adjacent free spaces
-    const newFreeSpace: FreeSpaceEntry = { offset, size };
+    const newFreeSpace = { offset, size };
     
     // Find adjacent free spaces and merge
     const adjacent = this.metadata.primary.freeSpace.filter(fs => 
@@ -331,90 +322,74 @@ export class EnhancedFileSystem {
       return { success: false, error: 'Metadata corrupted' };
     }
 
-    try {
-      // Remove existing file if it exists
+    // Remove existing file if it exists
+    const existingFileIndex = this.metadata.primary.files.findIndex(f => f.name === fileName);
+    if (existingFileIndex !== -1) {
       await this.deleteFileInternal(fileName);
+    }
 
-      const chunks = this.splitIntoChunks(content);
-      const chunkRefs: string[] = [];
-      const now = Date.now();
+    // Split into chunks
+    const chunks = this.splitIntoChunks(content);
+    const chunkRefs: string[] = [];
+    const fileId = crypto.randomUUID();
 
-      // Process each chunk
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        const hash = this.calculateChecksum(chunk);
-        
-        // Check if chunk already exists
-        if (this.metadata.primary.chunks.has(hash)) {
-          // Increment reference count
-          const existingChunk = this.metadata.primary.chunks.get(hash)!;
-          existingChunk.references++;
-          chunkRefs.push(hash);
-          continue;
-        }
-
-        // Compress chunk
-        const compressedData = await this.compress(chunk);
-        const chunkChecksum = this.calculateChecksum(compressedData);
-
-        // Find space for chunk and replica
-        const chunkSize = compressedData.length;
-        const replicaOffset = this.getNextOffset() + Math.ceil(chunkSize / this.blockSize) * this.blockSize;
-        
-        let offset = this.findFreeSpace(chunkSize);
-        if (offset === null) {
-          offset = this.getNextOffset();
-        }
-
-        // Check disk space
-        const diskSize = this.disk.size ? this.disk.size() : Infinity;
-        if (replicaOffset + chunkSize > diskSize) {
-          Logger.error('[YOIFS] Not enough disk space for file and replica!');
-          return { success: false, error: 'Disk full: not enough space for file and replica' };
-        }
-
-        // Write chunk and replica
-        await this.disk.write(offset, compressedData);
-        await this.disk.write(replicaOffset, compressedData);
-
-        // Store chunk metadata
-        const chunkMeta: FileChunk = {
-          hash,
-          compressedData,
-          originalSize: chunk.length,
-          references: 1,
-          offset,
-          replicaOffset,
-          checksum: chunkChecksum
-        };
-
-        this.metadata.primary.chunks.set(hash, chunkMeta);
+    // Process each chunk
+    for (const chunk of chunks) {
+      const hash = this.calculateChecksum(chunk);
+      
+      // Check if chunk already exists
+      if (this.metadata.primary.chunks.has(hash)) {
+        const existingChunk = this.metadata.primary.chunks.get(hash)!;
+        existingChunk.references++;
         chunkRefs.push(hash);
+        continue;
       }
 
-      // Create file metadata
-      const fileMeta: FileMeta = {
-        name: fileName,
-        size: content.length,
-        checksum: this.calculateChecksum(content),
-        chunkRefs,
-        createdAt: now,
-        modifiedAt: now
+      // Compress chunk
+      const compressedData = await this.compress(chunk);
+      
+      // Find space for chunk and replica
+      const offset = this.findFreeSpace(compressedData.length) || this.getNextOffset();
+      const replicaOffset = offset + Math.ceil(compressedData.length / this.blockSize) * this.blockSize;
+      
+      // Write chunk and replica
+      await this.disk.write(offset, compressedData);
+      await this.disk.write(replicaOffset, compressedData);
+
+      // Store chunk metadata
+      const chunkMeta: FileChunk = {
+        hash,
+        compressedData,
+        originalSize: chunk.length,
+        references: 1,
+        offset,
+        replicaOffset,
+        checksum: this.calculateChecksum(compressedData)
       };
 
-      this.metadata.primary.files.push(fileMeta);
-      await this.saveMetadata();
-
-      Logger.info(`[YOIFS] File '${fileName}' written successfully (${chunks.length} chunks)`);
-      return { success: true };
-
-    } catch (error: any) {
-      Logger.error(`[YOIFS] Failed to write file '${fileName}': ${error.message}`);
-      return { success: false, error: error.message };
+      this.metadata.primary.chunks.set(hash, chunkMeta);
+      chunkRefs.push(hash);
     }
+
+    // Create file metadata
+    const fileMeta: FileMeta = {
+      name: fileName,
+      size: content.length,
+      checksum: this.calculateChecksum(content),
+      chunkRefs,
+      createdAt: Date.now(),
+      modifiedAt: Date.now()
+    };
+
+    this.metadata.primary.files.push(fileMeta);
+    await this.saveMetadata();
+
+    Logger.info(`[YOIFS] File '${fileName}' written successfully (${chunks.length} chunks)`);
+    return { success: true };
   }
 
-  async readFile(fileName: string): Promise<FileSystemResult<Buffer>> {
+  // Enhanced readFile with partial corruption recovery
+  async readFile(fileName: string, options: ReadOptions = {}): Promise<PartialFileResult> {
     await this.loadMetadata();
     
     if (this.metadataCorrupted) {
@@ -428,49 +403,126 @@ export class EnhancedFileSystem {
       return { success: false, error: 'File not found' };
     }
 
-    try {
-      const recoveredChunks: Buffer[] = [];
-      let corruptedChunks = 0;
-      let totalChunks = fileMeta.chunkRefs.length;
+    if (options.allowPartialRecovery) {
+      return this.readFileWithGracefulDegradation(fileName, fileMeta, options);
+    } else {
+      return this.readFileStrict(fileName, fileMeta);
+    }
+  }
 
-      for (const chunkRef of fileMeta.chunkRefs) {
-        const chunkMeta = this.metadata.primary.chunks.get(chunkRef);
-        if (!chunkMeta) {
-          corruptedChunks++;
-          Logger.error(`[YOIFS] Chunk ${chunkRef} not found in metadata`);
-          continue;
-        }
-
-        const chunkResult = await this.readChunk(chunkMeta);
-        if (chunkResult.success) {
-          recoveredChunks.push(chunkResult.data!);
-        } else {
-          corruptedChunks++;
-          Logger.error(`[YOIFS] Failed to read chunk ${chunkRef}: ${chunkResult.error}`);
-        }
+  // Original strict readFile behavior
+  private async readFileStrict(fileName: string, fileMeta: FileMeta): Promise<PartialFileResult> {
+    const recoveredChunks: Buffer[] = [];
+    
+    for (const chunkRef of fileMeta.chunkRefs) {
+      const chunkMeta = this.metadata.primary.chunks.get(chunkRef);
+      if (!chunkMeta) {
+        Logger.error(`[YOIFS] Chunk ${chunkRef} not found for file '${fileName}'`);
+        return { success: false, error: `Chunk ${chunkRef} not found` };
       }
 
-      if (corruptedChunks === 0) {
-        const fullContent = Buffer.concat(recoveredChunks);
+      const chunkResult = await this.readChunk(chunkMeta);
+      if (!chunkResult.success) {
+        Logger.error(`[YOIFS] Failed to read chunk ${chunkRef}: ${chunkResult.error}`);
+        return { success: false, error: `Failed to read chunk ${chunkRef}: ${chunkResult.error}` };
+      }
+      
+      recoveredChunks.push(chunkResult.data!);
+    }
+
+    const fullContent = Buffer.concat(recoveredChunks);
+    
+    // Verify file checksum
+    if (this.calculateChecksum(fullContent) !== fileMeta.checksum) {
+      Logger.error(`[YOIFS] File checksum verification failed for '${fileName}'`);
+      return { success: false, error: 'File checksum verification failed' };
+    }
+
+    Logger.info(`[YOIFS] File '${fileName}' read successfully`);
+    return { success: true, data: fullContent };
+  }
+
+  // New partial recovery implementation
+  private async readFileWithGracefulDegradation(
+    fileName: string, 
+    fileMeta: FileMeta, 
+    options: ReadOptions
+  ): Promise<PartialFileResult> {
+    const recoveredChunks: Buffer[] = [];
+    const corruptedChunkRefs: string[] = [];
+    let totalRecoveredSize = 0;
+    const fillPattern = options.fillCorruptedChunks === 'pattern' ? 0xDEADBEEF : 0x00;
+
+    Logger.info(`[YOIFS] Attempting partial recovery for file '${fileName}'`);
+
+    for (const chunkRef of fileMeta.chunkRefs) {
+      const chunkMeta = this.metadata.primary.chunks.get(chunkRef);
+      if (!chunkMeta) {
+        Logger.warning(`[YOIFS] Chunk ${chunkRef} not found, filling with ${options.fillCorruptedChunks || 'zeros'}`);
+        corruptedChunkRefs.push(chunkRef);
         
-        // Verify file checksum
-        if (this.calculateChecksum(fullContent) === fileMeta.checksum) {
-          return { success: true, data: fullContent };
-        } else {
-          Logger.error(`[YOIFS] File checksum verification failed for '${fileName}'`);
-          return { success: false, error: 'File checksum verification failed' };
-        }
-      } else {
-        Logger.warning(`[YOIFS] ${corruptedChunks}/${totalChunks} chunks corrupted in file '${fileName}'`);
-        return { 
-          success: false, 
-          error: `${corruptedChunks} chunks corrupted out of ${totalChunks}` 
-        };
+        // Fill missing chunk with zeros or pattern
+        const fillSize = this.chunkSize; // Default chunk size
+        const fillBuffer = Buffer.alloc(fillSize, fillPattern);
+        recoveredChunks.push(fillBuffer);
+        continue;
       }
 
-    } catch (error: any) {
-      Logger.error(`[YOIFS] Failed to read file '${fileName}': ${error.message}`);
-      return { success: false, error: error.message };
+      const chunkResult = await this.readChunk(chunkMeta);
+      if (chunkResult.success) {
+        recoveredChunks.push(chunkResult.data!);
+        totalRecoveredSize += chunkResult.data!.length;
+        Logger.info(`[YOIFS] Successfully recovered chunk ${chunkRef}`);
+      } else {
+        Logger.warning(`[YOIFS] Failed to recover chunk ${chunkRef}: ${chunkResult.error}`);
+        corruptedChunkRefs.push(chunkRef);
+        
+        // Fill corrupted chunk
+        const fillSize = chunkMeta.originalSize;
+        const fillBuffer = Buffer.alloc(fillSize, fillPattern);
+        recoveredChunks.push(fillBuffer);
+      }
+    }
+
+    const partialData = Buffer.concat(recoveredChunks);
+    const recoveryRate = (totalRecoveredSize / fileMeta.size) * 100;
+    const minimumRate = options.minimumRecoveryRate || 0;
+
+    // Create corruption report
+    const corruptionReport: CorruptionReport = {
+      totalChunks: fileMeta.chunkRefs.length,
+      corruptedChunks: corruptedChunkRefs.length,
+      recoveredChunks: fileMeta.chunkRefs.length - corruptedChunkRefs.length,
+      recoveryRate: recoveryRate,
+      corruptedChunkRefs: corruptedChunkRefs,
+      partialDataAvailable: recoveryRate > 0
+    };
+
+    // Check if recovery meets minimum threshold
+    if (recoveryRate < minimumRate) {
+      Logger.warning(`[YOIFS] Recovery rate ${recoveryRate.toFixed(1)}% below minimum ${minimumRate}%`);
+      return {
+        success: false,
+        error: `Recovery rate ${recoveryRate.toFixed(1)}% below minimum ${minimumRate}%`,
+        corruptionReport
+      };
+    }
+
+    if (corruptedChunkRefs.length > 0) {
+      Logger.warning(`[YOIFS] Partial recovery completed for '${fileName}': ${recoveryRate.toFixed(1)}% recovered`);
+      return {
+        success: true,
+        data: partialData,
+        error: `Partial corruption detected: ${corruptedChunkRefs.length} chunks corrupted`,
+        corruptionReport
+      };
+    } else {
+      Logger.info(`[YOIFS] Full recovery completed for '${fileName}'`);
+      return {
+        success: true,
+        data: partialData,
+        corruptionReport
+      };
     }
   }
 
@@ -576,6 +628,7 @@ export class EnhancedFileSystem {
     await this.loadMetadata();
     
     if (this.metadataCorrupted) {
+      Logger.error('[YOIFS] Cannot get file info: metadata is corrupted!');
       return { success: false, error: 'Metadata corrupted' };
     }
 
@@ -588,50 +641,70 @@ export class EnhancedFileSystem {
   }
 
   async appendFile(fileName: string, additionalContent: Buffer): Promise<FileSystemResult<void>> {
+    // Read existing file
     const existingResult = await this.readFile(fileName);
     if (!existingResult.success) {
-      return { success: false, error: existingResult.error };
+      return { success: false, error: 'Cannot read existing file for append' };
     }
 
+    // Combine content
     const combinedContent = Buffer.concat([existingResult.data!, additionalContent]);
+    
+    // Write combined file
     return this.writeFile(fileName, combinedContent);
   }
 
   async getDiskUsage(): Promise<FileSystemResult<{ used: number; free: number; total: number }>> {
     await this.loadMetadata();
     
-    const total = this.disk.size ? this.disk.size() : 0;
-    let used = this.metadataOffset + this.metadataSize; // Metadata space
-    
-    // Calculate used space from chunks
-    for (const chunk of this.metadata.primary.chunks.values()) {
-      used += chunk.compressedData.length * 2; // Primary + replica
+    if (this.metadataCorrupted) {
+      Logger.error('[YOIFS] Cannot get disk usage: metadata is corrupted!');
+      return { success: false, error: 'Metadata corrupted' };
     }
-    
-    const free = total - used;
-    
-    return { 
-      success: true, 
-      data: { used, free, total } 
+
+    let usedSpace = 0;
+    for (const chunk of this.metadata.primary.chunks.values()) {
+      usedSpace += chunk.compressedData.length * 2; // Primary + replica
+    }
+
+    const totalSpace = this.disk.size ? this.disk.size() : 0;
+    const freeSpace = totalSpace - usedSpace;
+
+    return {
+      success: true,
+      data: {
+        used: usedSpace,
+        free: freeSpace,
+        total: totalSpace
+      }
     };
   }
 
   async getCompressionStats(): Promise<FileSystemResult<{ originalSize: number; compressedSize: number; ratio: number }>> {
     await this.loadMetadata();
     
-    let originalSize = 0;
-    let compressedSize = 0;
-    
-    for (const chunk of this.metadata.primary.chunks.values()) {
-      originalSize += chunk.originalSize * chunk.references;
-      compressedSize += chunk.compressedData.length * chunk.references;
+    if (this.metadataCorrupted) {
+      Logger.error('[YOIFS] Cannot get compression stats: metadata is corrupted!');
+      return { success: false, error: 'Metadata corrupted' };
     }
-    
-    const ratio = originalSize > 0 ? (compressedSize / originalSize) * 100 : 0;
-    
-    return { 
-      success: true, 
-      data: { originalSize, compressedSize, ratio } 
+
+    let totalOriginal = 0;
+    let totalCompressed = 0;
+
+    for (const chunk of this.metadata.primary.chunks.values()) {
+      totalOriginal += chunk.originalSize * chunk.references;
+      totalCompressed += chunk.compressedData.length * chunk.references;
+    }
+
+    const ratio = totalOriginal > 0 ? (totalCompressed / totalOriginal) * 100 : 0;
+
+    return {
+      success: true,
+      data: {
+        originalSize: totalOriginal,
+        compressedSize: totalCompressed,
+        ratio: ratio
+      }
     };
   }
 }

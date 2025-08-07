@@ -14,6 +14,9 @@ import {
   QuotaConfig
 } from '../types';
 
+// Import enhanced types from V2
+import { ReadOptions, PartialFileResult, CorruptionReport } from '../../v2-enhanced/version2-enhanced-solution';
+
 import { AuthenticationService } from '../security/AuthenticationService';
 import { AuthorizationService } from '../security/AuthorizationService';
 import { MonitoringService } from '../monitoring/MonitoringService';
@@ -224,7 +227,8 @@ export class EnterpriseFileSystem extends EventEmitter {
     }
   }
 
-  async readFile(sessionToken: string, fileId: string): Promise<FileSystemResult<Buffer>> {
+  // Enhanced readFile with partial corruption recovery support
+  async readFile(sessionToken: string, fileId: string, options?: ReadOptions): Promise<PartialFileResult> {
     const startTime = Date.now();
     
     try {
@@ -239,8 +243,8 @@ export class EnterpriseFileSystem extends EventEmitter {
         return { success: false, error: 'Invalid session' };
       }
 
-      // Read encrypted file using core file system
-      const result = await this.fileSystemCore.readFile(fileId);
+      // Read encrypted file using core file system with partial recovery options
+      const result = await this.fileSystemCore.readFile(fileId, options);
       
       if (result.success && result.data) {
         // Check bandwidth quota
@@ -286,7 +290,12 @@ export class EnterpriseFileSystem extends EventEmitter {
           const readTime = Date.now() - startTime;
           this.monitoringService.updateMetrics('read_latency', readTime);
           
-          return { success: true, data: decryptedContent };
+          // Return with corruption report if any
+          return { 
+            success: true, 
+            data: decryptedContent,
+            corruptionReport: result.corruptionReport
+          };
         } catch (decryptError: any) {
           Logger.error(`[ENTERPRISE] Decryption failed for file ${fileId}: ${decryptError.message}`);
           return { success: false, error: 'File decryption failed' };

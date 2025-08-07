@@ -10,6 +10,9 @@ import {
 import { CacheService } from '../performance/CacheService';
 import { Logger } from '../../v1-basic/index';
 
+// Import enhanced types from V2
+import { ReadOptions, PartialFileResult, CorruptionReport } from '../../v2-enhanced/version2-enhanced-solution';
+
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 
@@ -113,7 +116,8 @@ export class FileSystemCore {
     }
   }
 
-  async readFile(fileId: string): Promise<FileSystemResult<Buffer>> {
+  // Enhanced readFile with partial corruption recovery support
+  async readFile(fileId: string, options?: ReadOptions): Promise<PartialFileResult> {
     try {
       const fileMeta = this.files.get(fileId);
       if (!fileMeta) {
@@ -129,42 +133,138 @@ export class FileSystemCore {
         return { success: true, data: cachedData };
       }
 
-      // Reconstruct file from chunks
-      const recoveredChunks: Buffer[] = [];
-      
-      for (const chunkRef of fileMeta.chunkRefs) {
-        const chunkMeta = this.chunks.get(chunkRef);
-        if (!chunkMeta) {
-          throw new Error(`Chunk ${chunkRef} not found`);
-        }
-
-        const chunkResult = await this.readChunk(chunkMeta);
-        if (!chunkResult.success) {
-          throw new Error(`Failed to read chunk ${chunkRef}: ${chunkResult.error}`);
-        }
-        
-        recoveredChunks.push(chunkResult.data!);
+      if (options?.allowPartialRecovery) {
+        return this.readFileWithGracefulDegradation(fileId, fileMeta, options);
+      } else {
+        return this.readFileStrict(fileId, fileMeta);
       }
-
-      const fullContent = Buffer.concat(recoveredChunks);
-      
-      // Verify file checksum
-      if (this.calculateChecksum(fullContent) !== fileMeta.checksum) {
-        throw new Error('File checksum verification failed');
-      }
-
-      // Cache the file
-      await this.cacheService.set(`file_${fileId}`, fullContent);
-      
-      // Update file access stats
-      fileMeta.accessCount++;
-      fileMeta.lastAccessed = new Date();
-      
-      return { success: true, data: fullContent };
 
     } catch (error: any) {
       Logger.error(`[CORE] Failed to read file ${fileId}: ${error.message}`);
       return { success: false, error: error.message };
+    }
+  }
+
+  // Original strict readFile behavior
+  private async readFileStrict(fileId: string, fileMeta: FileMeta): Promise<PartialFileResult> {
+    const recoveredChunks: Buffer[] = [];
+    
+    for (const chunkRef of fileMeta.chunkRefs) {
+      const chunkMeta = this.chunks.get(chunkRef);
+      if (!chunkMeta) {
+        Logger.error(`[CORE] Chunk ${chunkRef} not found for file ${fileId}`);
+        return { success: false, error: `Chunk ${chunkRef} not found` };
+      }
+
+      const chunkResult = await this.readChunk(chunkMeta);
+      if (!chunkResult.success) {
+        Logger.error(`[CORE] Failed to read chunk ${chunkRef}: ${chunkResult.error}`);
+        return { success: false, error: `Failed to read chunk ${chunkRef}: ${chunkResult.error}` };
+      }
+      
+      recoveredChunks.push(chunkResult.data!);
+    }
+
+    const fullContent = Buffer.concat(recoveredChunks);
+    
+    // Verify file checksum
+    if (this.calculateChecksum(fullContent) !== fileMeta.checksum) {
+      Logger.error(`[CORE] File checksum verification failed for ${fileId}`);
+      return { success: false, error: 'File checksum verification failed' };
+    }
+
+    // Cache the file
+    await this.cacheService.set(`file_${fileId}`, fullContent);
+    
+    // Update file access stats
+    fileMeta.accessCount++;
+    fileMeta.lastAccessed = new Date();
+    
+    Logger.info(`[CORE] File ${fileId} read successfully`);
+    return { success: true, data: fullContent };
+  }
+
+  // New partial recovery implementation
+  private async readFileWithGracefulDegradation(
+    fileId: string, 
+    fileMeta: FileMeta, 
+    options: ReadOptions
+  ): Promise<PartialFileResult> {
+    const recoveredChunks: Buffer[] = [];
+    const corruptedChunkRefs: string[] = [];
+    let totalRecoveredSize = 0;
+    const fillPattern = options.fillCorruptedChunks === 'pattern' ? 0xDEADBEEF : 0x00;
+
+    Logger.info(`[CORE] Attempting partial recovery for file ${fileId}`);
+
+    for (const chunkRef of fileMeta.chunkRefs) {
+      const chunkMeta = this.chunks.get(chunkRef);
+      if (!chunkMeta) {
+        Logger.warning(`[CORE] Chunk ${chunkRef} not found, filling with ${options.fillCorruptedChunks || 'zeros'}`);
+        corruptedChunkRefs.push(chunkRef);
+        
+        // Fill missing chunk with zeros or pattern
+        const fillSize = this.chunkSize; // Default chunk size
+        const fillBuffer = Buffer.alloc(fillSize, fillPattern);
+        recoveredChunks.push(fillBuffer);
+        continue;
+      }
+
+      const chunkResult = await this.readChunk(chunkMeta);
+      if (chunkResult.success) {
+        recoveredChunks.push(chunkResult.data!);
+        totalRecoveredSize += chunkResult.data!.length;
+        Logger.info(`[CORE] Successfully recovered chunk ${chunkRef}`);
+      } else {
+        Logger.warning(`[CORE] Failed to recover chunk ${chunkRef}: ${chunkResult.error}`);
+        corruptedChunkRefs.push(chunkRef);
+        
+        // Fill corrupted chunk
+        const fillSize = chunkMeta.originalSize;
+        const fillBuffer = Buffer.alloc(fillSize, fillPattern);
+        recoveredChunks.push(fillBuffer);
+      }
+    }
+
+    const partialData = Buffer.concat(recoveredChunks);
+    const recoveryRate = (totalRecoveredSize / fileMeta.size) * 100;
+    const minimumRate = options.minimumRecoveryRate || 0;
+
+    // Create corruption report
+    const corruptionReport: CorruptionReport = {
+      totalChunks: fileMeta.chunkRefs.length,
+      corruptedChunks: corruptedChunkRefs.length,
+      recoveredChunks: fileMeta.chunkRefs.length - corruptedChunkRefs.length,
+      recoveryRate: recoveryRate,
+      corruptedChunkRefs: corruptedChunkRefs,
+      partialDataAvailable: recoveryRate > 0
+    };
+
+    // Check if recovery meets minimum threshold
+    if (recoveryRate < minimumRate) {
+      Logger.warning(`[CORE] Recovery rate ${recoveryRate.toFixed(1)}% below minimum ${minimumRate}%`);
+      return {
+        success: false,
+        error: `Recovery rate ${recoveryRate.toFixed(1)}% below minimum ${minimumRate}%`,
+        corruptionReport
+      };
+    }
+
+    if (corruptedChunkRefs.length > 0) {
+      Logger.warning(`[CORE] Partial recovery completed for ${fileId}: ${recoveryRate.toFixed(1)}% recovered`);
+      return {
+        success: true,
+        data: partialData,
+        error: `Partial corruption detected: ${corruptedChunkRefs.length} chunks corrupted`,
+        corruptionReport
+      };
+    } else {
+      Logger.info(`[CORE] Full recovery completed for ${fileId}`);
+      return {
+        success: true,
+        data: partialData,
+        corruptionReport
+      };
     }
   }
 
