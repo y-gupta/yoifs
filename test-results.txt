@@ -1,0 +1,148 @@
+################################################################
+# YOIFS FULL TEST RESULTS   (generated 2026-07-02 00:55:55)
+# node v25.2.1 | ts-node against solution.ts
+################################################################
+
+================================================================
+# TEST HARNESS  (index.ts  ==  pnpm dev)
+================================================================
+
+██╗   ██╗ ██████╗ ██╗███████╗███████╗
+╚██╗ ██╔╝██╔═══██╗██║██╔════╝██╔════╝
+ ╚████╔╝ ██║   ██║██║█████╗  ███████╗
+  ╚██╔╝  ██║   ██║██║██╔══╝  ╚════██║
+   ██║   ╚██████╔╝██║██║     ███████║
+   ╚═╝    ╚═════╝ ╚═╝╚═╝     ╚══════╝
+                                     
+   Your Own Indestructible File System
+    
+🎉 Welcome to YOIFS - where data corruption meets its match!
+💪 Let's see how indestructible your file system really is...
+
+
+============================================================
+🏗️  YOIFS INDESTRUCTIBILITY ASSESSMENT PROTOCOL
+============================================================
+
+============================================================
+🏗️  YOIFS LEVEL 1: BASIC YOIFS OPERATIONS
+============================================================
+[INFO] Testing basic write and read operations...
+[SUCCESS] ✓ File written successfully
+[SUCCESS] ✓ File content matches original
+[INFO] Testing multiple files and listing...
+[INFO] Found 4 files: test.txt, file1.txt, file2.txt, file3.txt
+[SUCCESS] ✓ YOIFS file listing works like a charm!
+[INFO] Testing file not found handling...
+[SUCCESS] ✓ Correctly handled non-existent file
+
+============================================================
+🏗️  YOIFS LEVEL 2: YOIFS CORRUPTION DETECTION POWERS
+============================================================
+[INFO] Setting up files for corruption testing...
+[SUCCESS] ✓ Successfully wrote 100 test files
+[INFO] Verifying files before corruption...
+[INFO] 100/100 files read correctly before corruption
+[INFO] Introducing 0.02% random byte corruption...
+[INFO] Corrupted 208 bytes
+[INFO] Testing corruption detection...
+[INFO] Corruption detection results:
+[INFO]   - Detected corruptions: 0
+[INFO]   - False positives: 0
+[INFO]   - Undetected corruptions: 0
+[WARNING] ⚠ No corruptions were detected - YOIFS might need corruption detection implementation
+
+============================================================
+🏗️  YOIFS LEVEL 3: YOIFS INDESTRUCTIBILITY STRESS TEST
+============================================================
+[INFO] Testing fault tolerance across corruption rates: 0.0%, 0.1%, 0.1%, 0.5%, 1.0%, 5.0%, 10.0%
+[INFO] 
+Testing corruption rate: 0.01%
+[INFO]   Results for 0.01% corruption:
+[INFO]     - Corrupted bytes: 104
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 0.05%
+[INFO]   Results for 0.05% corruption:
+[INFO]     - Corrupted bytes: 522
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 0.10%
+[INFO]   Results for 0.10% corruption:
+[INFO]     - Corrupted bytes: 1042
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 0.50%
+[INFO]   Results for 0.50% corruption:
+[INFO]     - Corrupted bytes: 5225
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 1.00%
+[INFO]   Results for 1.00% corruption:
+[INFO]     - Corrupted bytes: 10445
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 5.00%
+[INFO]   Results for 5.00% corruption:
+[INFO]     - Corrupted bytes: 52239
+[INFO]     - Successful reads: 100/100 (100.0%)
+[INFO]     - Detected corruptions: 0/100 (0.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+[INFO] 
+Testing corruption rate: 10.00%
+[INFO]   Results for 10.00% corruption:
+[INFO]     - Corrupted bytes: 104445
+[INFO]     - Successful reads: 96/100 (96.0%)
+[INFO]     - Detected corruptions: 4/100 (4.0%)
+[INFO]     - Data integrity failures: 0/100 (0.0%)
+
+============================================================
+🏗️  YOIFS YOIFS ASSESSMENT COMPLETE
+============================================================
+
+================================================================
+# UNIT: metadata serialization round-trip
+================================================================
+✅ metadata serialization round-trip passed
+
+================================================================
+# INTEGRATION: metadata persistence (disk-only, hardened)
+================================================================
+✅ PROOF A: writeFile persists the metadata root to disk
+✅ PROOF B: a fresh FileSystem reads all files straight from disk (no RAM copy)
+✅ PROOF C: blank disk reports empty (no false metadata)
+   (corrupted 104419 bytes across the whole 1 MB disk)
+✅ PROOF D: metadata survived 10% corruption (all 10 files still indexed); 10/10 data-recovered, 0 returned silently wrong
+
+All persistence proofs passed ✅
+
+================================================================
+# SELF-HEAL proofs (heal-test.ts)
+================================================================
+----------------------------------------------------------------
+SELF-HEALING PROOF  |  YOIFS_HEAL=(unset → ON)
+----------------------------------------------------------------
+
+=== PROOF 1: reading a file restores its corrupted copies ===
+(self-healing is ON)
+Before read:  good copies=2223, BAD copies=277
+After read:   good copies=2500, BAD copies=0
+Copies repaired during read (healCount): 277
+File content still correct: YES
+RESULT: ✅ all 277 corrupted copies were healed back to good
+
+=== PROOF 2: surviving repeated corruption over "time" ===
+(self-healing is ON)
+Survived all 40 rounds ✅  (healCount=11142)
+RESULT: file stayed alive — corruption could not accumulate
+----------------------------------------------------------------
