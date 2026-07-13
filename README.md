@@ -31,6 +31,7 @@ The project consists of several key components:
 - Implement `writeFile()`, `readFile()`, and `listFiles()` methods
 - Design a file allocation scheme (e.g., File Allocation Table)
 - Handle multiple files and proper metadata storage
+- All state must live on the disk: the harness re-mounts (constructs a fresh `FileSystem` over the same disk) and expects your files to survive
 
 ### Level 2: Corruption Detection
 - Add checksums or other integrity verification mechanisms
@@ -45,7 +46,7 @@ The project consists of several key components:
 ## Getting Started
 
 ### Prerequisites
-- Node.js (v16 or higher)
+- Node.js (v22 or higher; the checksum helper uses `zlib.crc32`)
 - pnpm package manager
 
 ### Installation
@@ -66,9 +67,9 @@ pnpm dev
 
 The test harness runs three levels of tests:
 
-1. **Basic Functionality**: Tests file operations without corruption
-2. **Corruption Detection**: Introduces 1% corruption and tests detection capabilities
-3. **Fault Tolerance Rate**: Tests system resilience across corruption rates from 0.1% to 30%
+1. **Basic Functionality**: Tests file operations without corruption, including a remount check (a fresh `FileSystem` instance over the same disk must still see all files)
+2. **Corruption Detection**: Introduces mild random byte corruption and tests detection capabilities
+3. **Fault Tolerance Rate**: Tests system resilience across increasing corruption rates; reads always go through a remounted instance
 
 ### Test Results Interpretation
 

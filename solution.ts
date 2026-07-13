@@ -1,4 +1,4 @@
-import * as crypto from 'crypto';
+import * as zlib from 'zlib';
 import { Disk } from './index';
 
 // Result type for file system operations
@@ -97,9 +97,9 @@ export class FileSystem {
     return { success: false, error: 'Health check not implemented' };
   }
 
-  // helper function to calculate checksum, feel free to use this or implement your own
+  // helper function to calculate a CRC32 checksum, feel free to use this or implement your own
   private calculateChecksum(data: Buffer): string {
-    return crypto.createHash('crc32').update(data).digest('hex');
+    return zlib.crc32(data).toString(16).padStart(8, '0');
   }
 
 }

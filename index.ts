@@ -211,6 +211,24 @@ class TestHarness {
         Logger.error('Should have failed for non-existent file');
       }
 
+      // Test 4: Remount - a fresh FileSystem over the same disk must still see everything
+      Logger.info('Testing remount (fresh FileSystem instance on the same disk)...');
+      const remountedFs = new FileSystem(this.disk);
+
+      const remountList = await remountedFs.listFiles();
+      if (remountList.success && remountList.data && remountList.data.length >= 4) {
+        Logger.success('Remounted YOIFS still lists all files');
+      } else {
+        Logger.error('Remounted YOIFS lost track of files - is your metadata stored only in memory?');
+      }
+
+      const remountRead = await remountedFs.readFile('test.txt');
+      if (remountRead.success && remountRead.data && Buffer.compare(testContent, remountRead.data) === 0) {
+        Logger.success('Remounted YOIFS read file content correctly');
+      } else {
+        Logger.error('Remounted YOIFS could not read file content back - is your metadata stored only in memory?');
+      }
+
     } catch (error) {
       Logger.error(`Level 1 test failed with exception: ${error}`);
     }
@@ -226,7 +244,7 @@ class TestHarness {
       this.fs = new FileSystem(this.disk);
 
       Logger.info('Setting up files for corruption testing...');
-      const testFiles = TestUtils.generateTestFiles(100, 10, 500);
+      const testFiles = TestUtils.generateTestFiles(100, 512, 4096);
 
       // Write all test files
       for (const file of testFiles) {
@@ -237,6 +255,9 @@ class TestHarness {
         }
       }
       Logger.success(`Successfully wrote ${testFiles.length} test files`);
+
+      // Remount: all reads below go through a fresh instance, not the writer's memory
+      this.fs = new FileSystem(this.disk);
 
       // Verify all files read correctly before corruption
       Logger.info('Verifying files before corruption...');
@@ -313,7 +334,7 @@ class TestHarness {
       const testFs = new FileSystem(testDisk);
 
       // Generate and write test files
-      const testFiles = TestUtils.generateTestFiles(testFileCount, 10, 500);
+      const testFiles = TestUtils.generateTestFiles(testFileCount, 512, 4096);
       let writeSuccesses = 0;
 
       for (const file of testFiles) {
@@ -331,13 +352,16 @@ class TestHarness {
       // Introduce corruption
       const corruptedBytes = CorruptionSimulator.randomByteCorruption(testDisk, rate);
 
+      // Remount: reads must survive both corruption and a fresh instance
+      const readFs = new FileSystem(testDisk);
+
       // Test file system resilience
       let successfulReads = 0;
       let detectedCorruptions = 0;
       let dataIntegrityFailures = 0;
 
       for (const file of testFiles) {
-        const result = await testFs.readFile(file.name);
+        const result = await readFs.readFile(file.name);
 
         if (result.success && result.data) {
           if (Buffer.compare(file.content, result.data) === 0) {
